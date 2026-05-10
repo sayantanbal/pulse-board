@@ -1,0 +1,12 @@
+{
+  "name": "pulse-board",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "pnpm --filter @pulse-board/shared build && pnpm --filter @pulse-board/backend build && pnpm --filter @pulse-board/frontend build",
+    "build:shared": "pnpm --filter @pulse-board/shared build",
+    "dev:backend": "pnpm build:shared && pnpm --filter @pulse-board/backend dev",
+    "dev:frontend": "pnpm --filter @pulse-board/frontend dev",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
