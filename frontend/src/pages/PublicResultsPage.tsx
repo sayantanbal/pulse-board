@@ -12,7 +12,7 @@ import {
   type DeltaPayload,
   type SnapshotPayload,
 } from "../data/socket/analyticsSocket";
-import { ThemeToggle } from "../ui/ThemeToggle";
+import { TopNav } from "../ui/TopNav";
 
 type PublicSummary = {
   totalCompleteResponses: number;
@@ -59,8 +59,11 @@ function getApiBase(): string {
 
 export function PublicResultsPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
+  
   const pollId = typeof id === "string" && objectIdRegex.test(id) ? id : null;
-  const { user, logout } = useAuth();
 
   const [poll, setPoll] = useState<PollWire | null>(null);
   const [summary, setSummary] = useState<PublicSummary | null>(null);
@@ -72,18 +75,73 @@ export function PublicResultsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const socket = useMemo(() => getAnalyticsSocket(), []);
+  
   const answersRef = useRef<Record<string, string>>({});
   const submittedRef = useRef(false);
   const blurDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const navigate = useNavigate();
-  const location = useLocation();
 
   /* ── timer countdown ───────────────────────────────────────────────── */
   const [timerRemaining, setTimerRemaining] = useState<number>(0);
   const timerTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoSubmittedRef = useRef(false);
+  
+  const socket = useMemo(() => getAnalyticsSocket(), []);
+  
+  const summaryMap = useMemo(() => {
+    if (!summary) {
+      return new Map<string, PublicSummary["questions"][number]>();
+    }
+    return new Map(summary.questions.map((q) => [q.questionId, q]));
+  }, [summary]);
+
+  const responderQuestions = useMemo(() => {
+    if (!poll) {
+      return [];
+    }
+    return [...poll.questions].sort((a, b) => a.order - b.order);
+  }, [poll]);
+
+  const resultsQuestions = useMemo(() => {
+    if (!poll) {
+      return [];
+    }
+    return [...poll.questions]
+      .sort((a, b) => a.order - b.order)
+      .map((q) => {
+        const summaryQuestion = summaryMap.get(q._id);
+        const optionMap = new Map(
+          summaryQuestion?.options.map((o) => [o.optionId, o]) ?? [],
+        );
+        return {
+          ...q,
+          options: [...q.options]
+            .sort((a, b) => a.order - b.order)
+            .map((o) => {
+              const summaryOption = optionMap.get(o._id);
+              return {
+                ...o,
+                count: summaryOption?.count ?? 0,
+                percentage: summaryOption?.percentage ?? 0,
+              };
+            }),
+        };
+      });
+  }, [poll, summaryMap]);
+
+  const missingRequired = useMemo(() => {
+    if (!poll) {
+      return [] as string[];
+    }
+    return poll.questions
+      .filter((q) => q.isRequired && !answers[q._id])
+      .map((q) => q._id);
+  }, [answers, poll]);
+
+  const canSubmit =
+    !submitting &&
+    (!submitted || poll?.allowResponseChanges) &&
+    poll?.status !== "published" &&
+    poll?.status !== "expired";
 
   function computeRemaining(timerSeconds: number, timerStartedAt: Date): number {
     const elapsed = Math.floor((Date.now() - timerStartedAt.getTime()) / 1000);
@@ -323,102 +381,6 @@ export function PublicResultsPage() {
     };
   }, [fetchPublicPoll, pollId, socket, status]);
 
-  const summaryMap = useMemo(() => {
-    if (!summary) {
-      return new Map<string, PublicSummary["questions"][number]>();
-    }
-    return new Map(summary.questions.map((q) => [q.questionId, q]));
-  }, [summary]);
-
-  const responderQuestions = useMemo(() => {
-    if (!poll) {
-      return [];
-    }
-    return [...poll.questions].sort((a, b) => a.order - b.order);
-  }, [poll]);
-
-  const resultsQuestions = useMemo(() => {
-    if (!poll) {
-      return [];
-    }
-    return [...poll.questions]
-      .sort((a, b) => a.order - b.order)
-      .map((q) => {
-        const summaryQuestion = summaryMap.get(q._id);
-        const optionMap = new Map(
-          summaryQuestion?.options.map((o) => [o.optionId, o]) ?? [],
-        );
-        return {
-          ...q,
-          options: [...q.options]
-            .sort((a, b) => a.order - b.order)
-            .map((o) => {
-              const summaryOption = optionMap.get(o._id);
-              return {
-                ...o,
-                count: summaryOption?.count ?? 0,
-                percentage: summaryOption?.percentage ?? 0,
-              };
-            }),
-        };
-      });
-  }, [poll, summaryMap]);
-
-  const missingRequired = useMemo(() => {
-    if (!poll) {
-      return [] as string[];
-    }
-    return poll.questions
-      .filter((q) => q.isRequired && !answers[q._id])
-      .map((q) => q._id);
-  }, [answers, poll]);
-
-  const canSubmit =
-    !submitting &&
-    (!submitted || poll?.allowResponseChanges) &&
-    poll?.status !== "published" &&
-    poll?.status !== "expired";
-
-  if (!pollId) {
-    return (
-      <main className="page stack">
-        <h1 className="title">Pulse Board</h1>
-        <div className="card stack">
-          <p className="subtitle">Public poll</p>
-          <p className="muted">That link does not look like a valid poll id.</p>
-        </div>
-      </main>
-    );
-  }
-
-  if (loading && !poll) {
-    return (
-      <main className="page stack">
-        <h1 className="title">Pulse Board</h1>
-        <div className="card">Loading public poll...</div>
-      </main>
-    );
-  }
-
-  if (!poll) {
-    return (
-      <main className="page stack">
-        <h1 className="title">Pulse Board</h1>
-        <div className="card stack">
-          <p className="subtitle">Public poll</p>
-          <p className="muted">{error ?? "Poll data is unavailable."}</p>
-          <button
-            className="button"
-            type="button"
-            onClick={() => void fetchPublicPoll()}
-          >
-            Try again
-          </button>
-        </div>
-      </main>
-    );
-  }
-
   const triggerPartialSave = useCallback((debounceMs: number) => {
     if (!pollId || !poll || submitted || poll.status === "published") return;
     if (blurDebounceRef.current) clearTimeout(blurDebounceRef.current);
@@ -515,65 +477,60 @@ export function PublicResultsPage() {
     }
   };
 
-  return (
-    <main className="page stack">
-      {/* ── Top-right controls: theme toggle + optional user avatar ── */}
-      <div style={{ position: "absolute", top: "1rem", right: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-        <ThemeToggle />
-        {user ? (
-          <>
-            <div
-              style={{
-                width: "40px",
-                height: "40px",
-                borderRadius: "50%",
-                backgroundColor: "#3b82f6",
-                color: "white",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: "bold",
-                fontSize: "1.2rem",
-                textTransform: "uppercase",
-                cursor: "pointer",
-              }}
-              title="Account"
-              onClick={() => setShowUserMenu(!showUserMenu)}
+  if (!pollId) {
+    return (
+      <>
+        <TopNav />
+        <main className="page stack">
+          <h1 className="title">Pulse Board</h1>
+          <div className="card stack">
+            <p className="subtitle">Public poll</p>
+            <p className="muted">That link does not look like a valid poll id.</p>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  if (loading && !poll) {
+    return (
+      <>
+        <TopNav />
+        <main className="page stack">
+          <h1 className="title">Pulse Board</h1>
+          <div className="card">Loading public poll...</div>
+        </main>
+      </>
+    );
+  }
+
+  if (!poll) {
+    return (
+      <>
+        <TopNav />
+        <main className="page stack">
+          <h1 className="title">Pulse Board</h1>
+          <div className="card stack">
+            <p className="subtitle">Public poll</p>
+            <p className="muted">{error ?? "Poll data is unavailable."}</p>
+            <button
+              className="button"
+              type="button"
+              onClick={() => void fetchPublicPoll()}
             >
-              {(user.email || "?")[0]}
-            </div>
-            {showUserMenu ? (
-              <div
-                className="card stack"
-                style={{
-                  position: "absolute",
-                  top: "calc(100% + 0.5rem)",
-                  right: 0,
-                  padding: "1rem",
-                  zIndex: 10,
-                  minWidth: "max-content",
-                  boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
-                }}
-              >
-                <span className="muted" style={{ fontSize: "0.9rem" }}>
-                  {user.email}
-                </span>
-                <button
-                  className="button secondary"
-                  type="button"
-                  onClick={() => {
-                    setShowUserMenu(false);
-                    void logout();
-                  }}
-                >
-                  Sign out
-                </button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-      <header className="stack">
+              Try again
+            </button>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <TopNav />
+      <main className="page stack">
+        <header className="stack">
         <h1 className="title">{poll.title}</h1>
         <p className="subtitle">
           {poll.description?.trim() ? poll.description : "Public poll"}
@@ -787,5 +744,6 @@ export function PublicResultsPage() {
         </section>
       ) : null}
     </main>
+    </>
   );
 }
