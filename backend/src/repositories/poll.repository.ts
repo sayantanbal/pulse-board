@@ -15,6 +15,9 @@ export async function createPollDoc(input: {
   status?: "draft" | "active";
   allowCreatorResponses?: boolean;
   allowResponseChanges?: boolean;
+  timerSeconds?: number;
+  timerMode?: "none" | "attached" | "detached";
+  timerStartedAt?: Date;
   questions: Array<{
     _id?: string;
     prompt: string;
@@ -32,6 +35,9 @@ export async function createPollDoc(input: {
     status: input.status ?? "active",
     allowCreatorResponses: input.allowCreatorResponses ?? true,
     allowResponseChanges: input.allowResponseChanges ?? false,
+    timerSeconds: input.timerSeconds ?? 0,
+    timerMode: input.timerMode ?? "none",
+    timerStartedAt: input.timerStartedAt ?? null,
     questions: input.questions,
   });
 }

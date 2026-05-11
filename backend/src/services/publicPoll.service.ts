@@ -1,8 +1,10 @@
 import type { PollWire, SubmitPublicResponseBody } from "@pulse-board/shared";
 import { ERROR_CODES } from "@pulse-board/shared";
+import type { Response as ExpressResponse } from "express";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
-import { COOKIE_ACCESS } from "../config/cookies.js";
+import { randomUUID } from "crypto";
+import { COOKIE_ACCESS, COOKIE_ANON_SESSION } from "../config/cookies.js";
 import { env } from "../config/env.js";
 import { AggregateModel } from "../domain/aggregate.model.js";
 import type { PollDoc } from "../domain/poll.model.js";
@@ -213,6 +215,7 @@ export async function submitPublicPollResponse(input: {
   ip: string;
   userAgent: string;
   cookies: Record<string, unknown>;
+  res: ExpressResponse;
 }) {
   const poll = await findPublicPollOrThrow(input.pollId);
 
@@ -247,12 +250,23 @@ export async function submitPublicPollResponse(input: {
     );
   }
 
+  /**
+   * Deduplication strategy for anonymous polls:
+   * 1. Prefer the httpOnly `anon_session` cookie (unique per browser, survives shared IPs).
+   * 2. Fall back to the IP+UA hash only when no cookie exists yet.
+   * This correctly handles entire offices/schools on the same IP.
+   */
+  const anonSessionId = typeof input.cookies[COOKIE_ANON_SESSION] === "string"
+    ? (input.cookies[COOKIE_ANON_SESSION] as string)
+    : null;
+  const dedupKey = anonSessionId ?? ipHash;
+
   let existingResponse = null;
   if (poll.responseMode === "anonymous") {
     const dedupWindowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
     existingResponse = await ResponseModel.findOne({
       pollId: poll._id,
-      ipHash,
+      ipHash: dedupKey,
       createdAt: { $gte: dedupWindowStart },
     });
   } else if (respondentId) {
@@ -378,6 +392,21 @@ export async function submitPublicPollResponse(input: {
         });
       }
     }
+  }
+
+  /**
+   * Set the anonymous session cookie on the response so that the same browser
+   * is always identified correctly on subsequent visits, even on shared networks.
+   * 30-day httpOnly cookie — invisible to client JavaScript.
+   */
+  if (poll.responseMode === "anonymous" && !anonSessionId) {
+    const newSessionId = randomUUID();
+    input.res.cookie(COOKIE_ANON_SESSION, newSessionId, {
+      httpOnly: true,
+      secure: env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    });
   }
 
   return {

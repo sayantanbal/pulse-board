@@ -1,7 +1,9 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { Toaster } from "sonner";
 import { AuthProvider } from "./auth/AuthProvider";
 import { RequireAuth } from "./auth/RequireAuth";
 import { AppShell } from "./pages/AppShell";
+import { CreatorLivePage } from "./pages/CreatorLivePage";
 import { DevHarness } from "./pages/DevHarness";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
@@ -14,6 +16,7 @@ import { RegisterPage } from "./pages/RegisterPage";
 export function App() {
   return (
     <AuthProvider>
+      <Toaster position="bottom-right" richColors closeButton />
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Navigate to="/app/polls" replace />} />
@@ -27,6 +30,7 @@ export function App() {
               <Route path="polls/new" element={<PollBuilderPage />} />
               <Route path="polls/:id/edit" element={<PollBuilderPage />} />
               <Route path="polls/:id/analytics" element={<AnalyticsPage />} />
+              <Route path="polls/:id/live" element={<CreatorLivePage />} />
             </Route>
           </Route>
           <Route path="*" element={<NotFoundPage />} />

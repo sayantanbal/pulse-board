@@ -302,3 +302,63 @@ export async function getPollSnapshotForSocket(pollId: string) {
     })),
   };
 }
+
+export async function getPollLeaderboard(ownerId: string, pollId: string) {
+  const poll = await PollModel.findOne({
+    _id: new mongoose.Types.ObjectId(pollId),
+    ownerId: new mongoose.Types.ObjectId(ownerId),
+    deletedAt: null,
+  });
+
+  if (!poll) {
+    throw new HttpError(404, ERROR_CODES.NOT_FOUND, "Poll not found");
+  }
+
+  const isAuthenticated = poll.responseMode === "authenticated";
+  const limit = 10;
+
+  // Fetch top complete responders ordered by response time (fastest = rank 1)
+  const responses = await ResponseModel.find({
+    pollId: poll._id,
+    status: "complete",
+  })
+    .sort({ createdAt: 1 })
+    .limit(limit)
+    .select("respondentId createdAt");
+
+  if (!responses.length) {
+    return { isAuthenticated, entries: [] };
+  }
+
+  // For authenticated polls, resolve email → display name (email prefix)
+  const nameMap = new Map<string, string>();
+  if (isAuthenticated) {
+    const { UserModel } = await import("../domain/user.model.js");
+    const respondentIds = responses
+      .map((r) => r.respondentId)
+      .filter((id): id is mongoose.Types.ObjectId => id != null);
+
+    if (respondentIds.length) {
+      const users = await UserModel.find({ _id: { $in: respondentIds } }).select("email");
+      for (const u of users) {
+        nameMap.set(u._id.toHexString(), u.email.split("@")[0] ?? u.email);
+      }
+    }
+  }
+
+  const total = responses.length;
+  const entries = responses.map((r, i) => {
+    const rank = i + 1;
+    const score = Math.round(((total - i) / total) * 500);
+    let name: string;
+    if (isAuthenticated && r.respondentId) {
+      name = nameMap.get(r.respondentId.toHexString()) ?? `User #${rank}`;
+    } else {
+      name = `Anonymous #${rank}`;
+    }
+    return { rank, name, score };
+  });
+
+  return { isAuthenticated, entries };
+}
+

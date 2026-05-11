@@ -35,6 +35,8 @@ type PollFormValues = {
   responseMode: ResponseMode;
   allowCreatorResponses: boolean;
   allowResponseChanges: boolean;
+  timerSeconds: number;
+  timerMode: "none" | "attached" | "detached";
   questions: Array<{
     _id?: string;
     prompt: string;
@@ -67,14 +69,15 @@ const pollFormSchema = z.object({
   description: z.string().max(5000),
   expiresAt: z
     .string()
-    .min(1)
     .refine(
-      (value) => !Number.isNaN(new Date(value).getTime()),
+      (value) => value === "" || !Number.isNaN(new Date(value).getTime()),
       "Invalid date",
     ),
   responseMode: responseModeSchema,
   allowCreatorResponses: z.boolean(),
   allowResponseChanges: z.boolean(),
+  timerSeconds: z.coerce.number().min(0).max(3600).default(0),
+  timerMode: z.enum(["none", "attached", "detached"]).default("none"),
   questions: z.array(pollQuestionFormSchema).min(1),
 });
 
@@ -110,6 +113,8 @@ function createEmptyPoll(): PollFormValues {
     responseMode: "anonymous",
     allowCreatorResponses: true,
     allowResponseChanges: false,
+    timerSeconds: 0,
+    timerMode: "none",
     questions: [createQuestion()],
   };
 }
@@ -133,6 +138,8 @@ function toFormValues(poll: PollWire): PollFormValues {
     responseMode: poll.responseMode,
     allowCreatorResponses: poll.allowCreatorResponses ?? true,
     allowResponseChanges: poll.allowResponseChanges ?? false,
+    timerSeconds: poll.timerSeconds ?? 0,
+    timerMode: (poll.timerMode as "none" | "attached" | "detached") ?? "none",
     questions: questions.length ? questions : [createQuestion()],
   };
 }
@@ -159,16 +166,24 @@ function buildCreatePayload(
   status?: "draft" | "active",
 ): CreatePollBody {
   const description = values.description.trim();
+  const mode = values.timerMode;
+  const secs = values.timerSeconds;
+  // Attached mode: expiry is computed server-side, send a placeholder far future date
+  const expiresAt = mode === "attached" && secs > 0
+    ? new Date(Date.now() + secs * 1000 + 5000) // server will override
+    : new Date(values.expiresAt);
   return {
     title: values.title.trim(),
     description: description.length ? description : undefined,
-    expiresAt: new Date(values.expiresAt),
+    expiresAt,
     responseMode: values.responseMode,
     allowCreatorResponses: values.allowCreatorResponses,
     allowResponseChanges: values.allowResponseChanges,
+    ...(secs > 0 ? { timerSeconds: secs } : {}),
+    timerMode: mode,
     status,
     questions: buildQuestionPayload(values.questions, false),
-  };
+  } as CreatePollBody;
 }
 
 function buildUpdatePayload(
@@ -177,16 +192,23 @@ function buildUpdatePayload(
   status?: "draft" | "active",
 ): UpdatePollBody {
   const description = values.description.trim();
+  const mode = values.timerMode;
+  const secs = values.timerSeconds;
+  const expiresAt = mode === "attached" && secs > 0
+    ? undefined // server controls expiry in attached mode
+    : new Date(values.expiresAt);
   return {
     title: values.title.trim(),
     description: description.length ? description : null,
-    expiresAt: new Date(values.expiresAt),
+    ...(expiresAt ? { expiresAt } : {}),
     responseMode: values.responseMode,
     allowCreatorResponses: values.allowCreatorResponses,
     allowResponseChanges: values.allowResponseChanges,
+    ...(secs > 0 ? { timerSeconds: secs } : { timerSeconds: 0 }),
+    timerMode: mode,
     status,
     questions: buildQuestionPayload(values.questions, includeIds),
-  };
+  } as UpdatePollBody;
 }
 
 function formatErrorMessage(error: unknown, fallback: string): string {
@@ -329,6 +351,8 @@ export function PollBuilderPage() {
   });
 
   const responseModeValue = watch("responseMode");
+  const timerSecondsValue = watch("timerSeconds");
+  const timerModeValue = watch("timerMode");
 
   const {
     fields: questionFields,
@@ -532,26 +556,14 @@ export function PollBuilderPage() {
       {!loading ? (
         <section className="card stack">
           <h2 style={{ margin: 0 }}>Poll details</h2>
-          <div className="grid-2">
-            <label className="field">
+          <label className="field">
               <span>Title</span>
               <input className="input" {...register("title")} />
               {errors.title?.message ? (
                 <span className="muted">{errors.title.message}</span>
               ) : null}
             </label>
-            <label className="field">
-              <span>Expiry</span>
-              <input
-                className="input"
-                type="datetime-local"
-                {...register("expiresAt")}
-              />
-              {errors.expiresAt?.message ? (
-                <span className="muted">{errors.expiresAt.message}</span>
-              ) : null}
-            </label>
-          </div>
+
           <label className="field">
             <span>Description</span>
             <textarea className="input" rows={3} {...register("description")} />
@@ -566,6 +578,82 @@ export function PollBuilderPage() {
               <option value="authenticated">Authenticated</option>
             </select>
           </label>
+
+          {/* ── Timer ──────────────────────────────────────────────────── */}
+          {timerSecondsValue > 0 ? (
+            <div className="field">
+              <label className="field">
+                <span>⏱ Timer mode</span>
+                <select className="input" {...register("timerMode")}>
+                  <option value="none">No timer behaviour</option>
+                  <option value="attached">
+                    Attached — expiry locked to now + timer
+                  </option>
+                  <option value="detached">
+                    Detached — auto-submit user answers when timer ends
+                  </option>
+                </select>
+              </label>
+              {timerModeValue === "attached" && (
+                <p className="muted" style={{ fontSize: "0.82rem", margin: 0 }}>
+                  ⚠️ Expiry will be set to <strong>now + {timerSecondsValue}s</strong> when the poll
+                  activates. You cannot change it afterwards.
+                </p>
+              )}
+              {timerModeValue === "detached" && (
+                <p className="muted" style={{ fontSize: "0.82rem", margin: 0 }}>
+                  Respondents' current answers will be auto-submitted when the timer reaches 0,
+                  even if incomplete. Poll stays open until its expiry.
+                </p>
+              )}
+            </div>
+          ) : null}
+
+          <div className="field">
+            <label className="field">
+              <span style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <span>⏱ Timer (seconds)</span>
+                <span className="muted" style={{ fontSize: "0.8rem", fontWeight: 400 }}>
+                  0 = no timer
+                </span>
+              </span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={3600}
+                step={5}
+                placeholder="e.g. 30"
+                {...register("timerSeconds", { valueAsNumber: true })}
+              />
+              {errors.timerSeconds?.message ? (
+                <span className="muted">{errors.timerSeconds.message}</span>
+              ) : null}
+            </label>
+            <p className="muted" style={{ fontSize: "0.8rem", margin: 0 }}>
+              Common: 30s, 60s, 90s. Set 0 to disable.
+            </p>
+          </div>
+
+          {/* Expiry — hidden when attached (server computes it) */}
+          {timerModeValue !== "attached" ? (
+            <label className="field">
+              <span>Expiry</span>
+              <input
+                className="input"
+                type="datetime-local"
+                {...register("expiresAt")}
+              />
+              {errors.expiresAt?.message ? (
+                <span className="muted">{errors.expiresAt.message}</span>
+              ) : null}
+            </label>
+          ) : (
+            <div className="poll-card" style={{ fontSize: "0.85rem", color: "#475569" }}>
+              🔒 Expiry auto-set to <strong>now + {timerSecondsValue}s</strong> on activation
+            </div>
+          )}
+
           <div className="grid-2">
             {responseModeValue === "authenticated" ? (
               <label className="row">
@@ -639,6 +727,20 @@ export function PollBuilderPage() {
             >
               Activate poll
             </button>
+          ) : null}
+          {isEdit && pollId && pollStatus === "active" ? (
+            <Link
+              className="button"
+              to={`/app/polls/${pollId}/live`}
+              style={{
+                background: "linear-gradient(135deg, #ef4444, #f97316)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.4rem",
+              }}
+            >
+              🔴 Go Live
+            </Link>
           ) : null}
         </div>
       ) : null}

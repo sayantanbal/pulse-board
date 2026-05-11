@@ -7,7 +7,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 
 type LocationState = {
-  from?: { pathname?: string };
+  from?: { pathname?: string; search?: string };
 };
 
 export function LoginPage() {
@@ -15,7 +15,9 @@ export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state as LocationState | null;
-  const redirectTo = state?.from?.pathname ?? "/app/polls";
+  const redirectTo = state?.from
+    ? `${state.from.pathname || ""}${state.from.search || ""}`
+    : "/app/polls";
 
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -94,7 +96,7 @@ export function LoginPage() {
           </button>
         </form>
         <p className="muted">
-          New here? <Link to="/register">Create an account</Link>.
+          New here? <Link to="/register" state={state}>Create an account</Link>.
         </p>
       </section>
     </main>

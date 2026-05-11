@@ -1,13 +1,18 @@
 import type { PollWire } from "@pulse-board/shared";
 import axios from "axios";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { motion } from "framer-motion";
+import confetti from "canvas-confetti";
+import { toast } from "sonner";
 import { apiClient } from "../data/api/client";
+import { useAuth } from "../auth/AuthProvider";
 import {
   getAnalyticsSocket,
   type DeltaPayload,
   type SnapshotPayload,
 } from "../data/socket/analyticsSocket";
+import { ThemeToggle } from "../ui/ThemeToggle";
 
 type PublicSummary = {
   totalCompleteResponses: number;
@@ -55,6 +60,7 @@ function getApiBase(): string {
 export function PublicResultsPage() {
   const { id } = useParams();
   const pollId = typeof id === "string" && objectIdRegex.test(id) ? id : null;
+  const { user, logout } = useAuth();
 
   const [poll, setPoll] = useState<PollWire | null>(null);
   const [summary, setSummary] = useState<PublicSummary | null>(null);
@@ -66,9 +72,23 @@ export function PublicResultsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const socket = useMemo(() => getAnalyticsSocket(), []);
   const answersRef = useRef<Record<string, string>>({});
   const submittedRef = useRef(false);
+  const blurDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  /* ── timer countdown ───────────────────────────────────────────────── */
+  const [timerRemaining, setTimerRemaining] = useState<number>(0);
+  const timerTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoSubmittedRef = useRef(false);
+
+  function computeRemaining(timerSeconds: number, timerStartedAt: Date): number {
+    const elapsed = Math.floor((Date.now() - timerStartedAt.getTime()) / 1000);
+    return Math.max(0, timerSeconds - elapsed);
+  }
 
   const fetchPublicPoll = useCallback(async () => {
     if (!pollId) {
@@ -111,6 +131,53 @@ export function PublicResultsPage() {
   useEffect(() => {
     submittedRef.current = submitted;
   }, [submitted]);
+
+  /* ── start timer tick when poll loads ──────────────────────────────── */
+  useEffect(() => {
+    if (!poll) return;
+    const timerSecs = poll.timerSeconds ?? 0;
+    const startedAt = poll.timerStartedAt
+      ? new Date(poll.timerStartedAt)
+      : null;
+    if (!timerSecs || !startedAt) return;
+
+    setTimerRemaining(computeRemaining(timerSecs, startedAt));
+
+    timerTickRef.current = setInterval(() => {
+      const remaining = computeRemaining(timerSecs, startedAt);
+      setTimerRemaining(remaining);
+      if (remaining <= 0) {
+        if (timerTickRef.current) clearInterval(timerTickRef.current);
+        // Detached mode: auto-submit current answers when timer ends
+        if (
+          (poll.timerMode ?? "none") === "detached" &&
+          !submittedRef.current &&
+          !autoSubmittedRef.current
+        ) {
+          autoSubmittedRef.current = true;
+          const currentAnswers = answersRef.current;
+          const payload = {
+            status: Object.keys(currentAnswers).length > 0 ? "complete" : "partial",
+            answers: Object.entries(currentAnswers)
+              .filter(([, oid]) => Boolean(oid))
+              .map(([qid, oid]) => ({ questionId: qid, optionId: oid })),
+          };
+          apiClient
+            .post(`/public/polls/${poll._id}/responses`, payload)
+            .then(() => {
+              setSubmitted(true);
+              sessionStorage.setItem(`poll_submitted_${poll._id}`, "1");
+            })
+            .catch(() => null);
+        }
+      }
+    }, 1000);
+
+    return () => {
+      if (timerTickRef.current) clearInterval(timerTickRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poll]);
 
   useEffect(() => {
     if (!pollId) {
@@ -308,7 +375,7 @@ export function PublicResultsPage() {
 
   const canSubmit =
     !submitting &&
-    !submitted &&
+    (!submitted || poll?.allowResponseChanges) &&
     poll?.status !== "published" &&
     poll?.status !== "expired";
 
@@ -352,9 +419,32 @@ export function PublicResultsPage() {
     );
   }
 
+  const triggerPartialSave = useCallback((debounceMs: number) => {
+    if (!pollId || !poll || submitted || poll.status === "published") return;
+    if (blurDebounceRef.current) clearTimeout(blurDebounceRef.current);
+    blurDebounceRef.current = setTimeout(() => {
+      if (submittedRef.current) return;
+      const currentAnswers = answersRef.current;
+      const answerEntries = Object.entries(currentAnswers).filter(([, v]) => Boolean(v));
+      if (answerEntries.length === 0) return;
+      const payload = {
+        status: "partial",
+        answers: answerEntries.map(([qid, oid]) => ({ questionId: qid, optionId: oid })),
+      };
+      const url = `${getApiBase()}/public/polls/${pollId}/responses`;
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      navigator.sendBeacon(url, blob);
+    }, debounceMs);
+  }, [pollId, poll, submitted]);
+
   const handleSelect = (questionId: string, optionId: string) => {
     setSubmitError(null);
     setAnswers((prev) => ({ ...prev, [questionId]: optionId }));
+    triggerPartialSave(5000);
+  };
+
+  const handleBlur = () => {
+    triggerPartialSave(1000);
   };
 
   const handleSubmit = async () => {
@@ -383,23 +473,42 @@ export function PublicResultsPage() {
       await apiClient.post(`/public/polls/${pollId}/responses`, payload);
       sessionStorage.setItem(`${submittedKeyPrefix}${pollId}`, "1");
       setSubmitted(true);
+      if (blurDebounceRef.current) clearTimeout(blurDebounceRef.current);
+      toast.success("Response submitted! 🎉", {
+        description: "Thanks for participating. Your answers are saved.",
+        duration: 4000,
+      });
+      // Fire confetti burst on successful submission
+      confetti({
+        particleCount: 120,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ["#1d4ed8", "#60a5fa", "#a78bfa", "#34d399", "#fbbf24"],
+      });
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const statusCode = err.response?.status;
         if (statusCode === 401) {
-          setSubmitError("Please sign in to respond to this poll.");
+          const msg = "Please sign in to respond to this poll.";
+          setSubmitError(msg);
+          toast.error(msg);
         } else if (statusCode === 409) {
-          setSubmitError(
+          const msg =
             err.response?.data?.message ??
-              "A response from this session already exists.",
-          );
+            "A response from this session already exists.";
+          setSubmitError(msg);
+          toast.warning(msg);
           sessionStorage.setItem(`${submittedKeyPrefix}${pollId}`, "1");
           setSubmitted(true);
         } else {
-          setSubmitError(err.response?.data?.message ?? "Unable to submit.");
+          const msg = err.response?.data?.message ?? "Unable to submit.";
+          setSubmitError(msg);
+          toast.error(msg);
         }
       } else {
-        setSubmitError("Unable to submit.");
+        const msg = "Unable to submit.";
+        setSubmitError(msg);
+        toast.error(msg);
       }
     } finally {
       setSubmitting(false);
@@ -408,6 +517,62 @@ export function PublicResultsPage() {
 
   return (
     <main className="page stack">
+      {/* ── Top-right controls: theme toggle + optional user avatar ── */}
+      <div style={{ position: "absolute", top: "1rem", right: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <ThemeToggle />
+        {user ? (
+          <>
+            <div
+              style={{
+                width: "40px",
+                height: "40px",
+                borderRadius: "50%",
+                backgroundColor: "#3b82f6",
+                color: "white",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontWeight: "bold",
+                fontSize: "1.2rem",
+                textTransform: "uppercase",
+                cursor: "pointer",
+              }}
+              title="Account"
+              onClick={() => setShowUserMenu(!showUserMenu)}
+            >
+              {(user.email || "?")[0]}
+            </div>
+            {showUserMenu ? (
+              <div
+                className="card stack"
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 0.5rem)",
+                  right: 0,
+                  padding: "1rem",
+                  zIndex: 10,
+                  minWidth: "max-content",
+                  boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+                }}
+              >
+                <span className="muted" style={{ fontSize: "0.9rem" }}>
+                  {user.email}
+                </span>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    void logout();
+                  }}
+                >
+                  Sign out
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </div>
       <header className="stack">
         <h1 className="title">{poll.title}</h1>
         <p className="subtitle">
@@ -416,6 +581,56 @@ export function PublicResultsPage() {
         <div className="stack" style={{ gap: "0.5rem" }}>
           <span className="pill">Status: {poll.status}</span>
           <span className="muted">Expires: {formatDate(poll.expiresAt)}</span>
+          {/* ── Timer countdown visible to respondents ── */}
+          {(poll.timerSeconds ?? 0) > 0 && poll.timerStartedAt && !submitted && (
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                padding: "0.35rem 0.8rem",
+                borderRadius: "999px",
+                background:
+                  timerRemaining <= 0
+                    ? "rgba(100,116,139,0.18)"
+                    : timerRemaining <= (poll.timerSeconds ?? 0) * 0.25
+                      ? "rgba(239,68,68,0.18)"
+                      : "rgba(34,197,94,0.18)",
+                border:
+                  timerRemaining <= 0
+                    ? "1px solid #334155"
+                    : timerRemaining <= (poll.timerSeconds ?? 0) * 0.25
+                      ? "1px solid #ef4444"
+                      : "1px solid #22c55e",
+                color:
+                  timerRemaining <= 0
+                    ? "#64748b"
+                    : timerRemaining <= (poll.timerSeconds ?? 0) * 0.25
+                      ? "#ef4444"
+                      : "#22c55e",
+                fontVariantNumeric: "tabular-nums",
+                fontWeight: 600,
+                fontSize: "0.9rem",
+                transition: "all 0.4s ease",
+              }}
+            >
+              <span>⏱</span>
+              <span>
+                {timerRemaining <= 0
+                  ? poll.timerMode === "detached"
+                    ? "Time's up — submitting…"
+                    : "Ended"
+                  : (() => {
+                      const m = Math.floor(timerRemaining / 60);
+                      const s = timerRemaining % 60;
+                      return m > 0
+                        ? `${m}:${s.toString().padStart(2, "0")} left`
+                        : `${s}s left`;
+                    })()}
+              </span>
+            </div>
+          )}
+
           {status === "published" && lastSocketEvent ? (
             <span className="muted">Live: {lastSocketEvent}</span>
           ) : null}
@@ -430,10 +645,19 @@ export function PublicResultsPage() {
             is published.
           </p>
         ) : null}
-        {poll.responseMode === "authenticated" ? (
-          <p className="muted">
-            Sign in is required to submit a response for this poll.
-          </p>
+        {!user && poll.responseMode === "authenticated" ? (
+          <div className="stack" style={{ gap: "0.5rem" }}>
+            <p className="muted">
+              Sign in is required to submit a response for this poll.
+            </p>
+            <button
+              className="button"
+              type="button"
+              onClick={() => navigate('/login', { state: { from: location } })}
+            >
+              Sign In
+            </button>
+          </div>
         ) : null}
         <button
           className="button secondary"
@@ -482,6 +706,7 @@ export function PublicResultsPage() {
                           onChange={() =>
                             handleSelect(question._id, option._id)
                           }
+                          onBlur={handleBlur}
                           disabled={!canSubmit}
                         />
                         <span>{option.text}</span>
@@ -502,7 +727,9 @@ export function PublicResultsPage() {
               {submitting
                 ? "Submitting..."
                 : submitted
-                  ? "Submitted"
+                  ? poll.allowResponseChanges
+                    ? "Update Response"
+                    : "Submitted"
                   : "Submit"}
             </button>
             {missingRequired.length > 0 && !submitted ? (
@@ -537,10 +764,11 @@ export function PublicResultsPage() {
                       <div className="stack" style={{ gap: "0.35rem" }}>
                         <span>{o.text}</span>
                         <div className="bar">
-                          <span
-                            style={{
-                              width: `${Math.min(100, Math.max(0, o.percentage))}%`,
-                            }}
+                          <motion.span
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min(100, Math.max(0, o.percentage))}%` }}
+                            transition={{ duration: 0.6, ease: "easeOut" }}
+                            style={{ display: "block", height: "100%", background: "linear-gradient(90deg, #1d4ed8, #60a5fa)" }}
                           />
                         </div>
                       </div>

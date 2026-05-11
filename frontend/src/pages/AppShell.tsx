@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
+import { ThemeToggle } from "../ui/ThemeToggle";
 
 export function AppShell() {
   const { user, logout } = useAuth();
@@ -13,7 +14,8 @@ export function AppShell() {
             Manage polls, track answers, publish results.
           </p>
         </div>
-        <div className="stack" style={{ gap: "0.5rem" }}>
+        <div className="row" style={{ gap: "0.75rem", alignItems: "center" }}>
+          <ThemeToggle />
           <span className="pill">{user?.email ?? "Signed in"}</span>
           <button
             className="button secondary"
@@ -28,7 +30,6 @@ export function AppShell() {
       <nav className="app-nav">
         <NavLink to="/app/polls">Polls</NavLink>
         <NavLink to="/app/polls/new">New poll</NavLink>
-        <span className="muted">Milestone 7: publish results</span>
       </nav>
 
       <Outlet />

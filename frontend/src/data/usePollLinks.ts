@@ -1,36 +1,36 @@
-import { useState } from "react";
+import { toast } from "sonner";
 import { buildPublicUrl, copyToClipboard, isAbortError } from "./pollLinks";
 
 type LinkFeedback = {
-  notice: string | null;
-  error: string | null;
+  /** @deprecated feedback is now delivered via sonner toasts — kept for backward compat */
+  notice: null;
+  /** @deprecated feedback is now delivered via sonner toasts — kept for backward compat */
+  error: null;
   clearFeedback: () => void;
   handleCopyLink: (pollId: string) => Promise<void>;
   handleShareLink: (pollId: string, title?: string) => Promise<void>;
 };
 
 /**
- * Provides copy-link and share-link handlers with notice/error feedback state.
+ * Provides copy-link and share-link handlers with sonner toast feedback.
  *
  * Usage:
- *   const { notice, error, clearFeedback, handleCopyLink, handleShareLink } = usePollLinks();
+ *   const { handleCopyLink, handleShareLink } = usePollLinks();
  */
 export function usePollLinks(): LinkFeedback {
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const clearFeedback = () => {
-    setNotice(null);
-    setError(null);
-  };
+  const clearFeedback = () => { /* no-op — feedback via toasts */ };
 
   const handleCopyLink = async (pollId: string): Promise<void> => {
-    clearFeedback();
     try {
       await copyToClipboard(buildPublicUrl(pollId));
-      setNotice("Public link copied.");
+      toast.success("Link copied!", {
+        description: "Share this link with respondents.",
+        duration: 3000,
+      });
     } catch {
-      setError("Unable to copy link.");
+      toast.error("Unable to copy link", {
+        description: "Please copy the URL from your browser address bar.",
+      });
     }
   };
 
@@ -38,33 +38,35 @@ export function usePollLinks(): LinkFeedback {
     pollId: string,
     title = "Pulse Board poll",
   ): Promise<void> => {
-    clearFeedback();
     const url = buildPublicUrl(pollId);
 
     // Try the native share sheet first
     if (navigator.share) {
       try {
         await navigator.share({ title, url });
-        setNotice("Share sheet opened.");
         return;
       } catch (err) {
         // User dismissed the share sheet — do nothing
         if (isAbortError(err)) {
           return;
         }
-        // Browser denied share (e.g. desktop Chromium NotAllowedError) —
-        // fall through to the clipboard fallback below
+        // Browser denied share — fall through to clipboard fallback
       }
     }
 
     // Clipboard fallback (also used when navigator.share is unavailable)
     try {
       await copyToClipboard(url);
-      setNotice("Public link copied.");
+      toast.success("Link copied!", {
+        description: "Share this link with respondents.",
+        duration: 3000,
+      });
     } catch {
-      setError("Unable to copy link.");
+      toast.error("Unable to copy link", {
+        description: "Please copy the URL from your browser address bar.",
+      });
     }
   };
 
-  return { notice, error, clearFeedback, handleCopyLink, handleShareLink };
+  return { notice: null, error: null, clearFeedback, handleCopyLink, handleShareLink };
 }

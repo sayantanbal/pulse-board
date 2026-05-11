@@ -21,6 +21,9 @@ function toPollWire(doc: PollDoc): PollWire {
     status: doc.status,
     allowCreatorResponses: doc.allowCreatorResponses,
     allowResponseChanges: doc.allowResponseChanges,
+    timerSeconds: doc.timerSeconds ?? 0,
+    timerMode: doc.timerMode ?? "none",
+    timerStartedAt: doc.timerStartedAt ?? undefined,
     deletedAt: doc.deletedAt ?? null,
     questions: doc.questions.map((q) => ({
       _id: q._id.toHexString(),
@@ -75,15 +78,32 @@ async function assertMutablePoll(ownerId: string, pollId: string): Promise<PollD
 }
 
 export async function createPoll(ownerId: string, body: CreatePollBody) {
+  const mode = body.timerMode ?? "none";
+  const timerSecs = body.timerSeconds ?? 0;
+  const isActive = (body.status ?? "active") === "active";
+
+  // Set timerStartedAt when poll activates
+  const timerStartedAt = isActive && timerSecs > 0 && mode !== "none"
+    ? new Date()
+    : undefined;
+
+  // Attached: lock expiresAt = now + timerSeconds
+  const expiresAt = isActive && mode === "attached" && timerStartedAt && timerSecs > 0
+    ? new Date(timerStartedAt.getTime() + timerSecs * 1000)
+    : body.expiresAt;
+
   const poll = await createPollDoc({
     ownerId,
     title: body.title,
     description: body.description,
-    expiresAt: body.expiresAt,
+    expiresAt,
     responseMode: body.responseMode,
     status: body.status ?? "active",
     allowCreatorResponses: body.allowCreatorResponses,
     allowResponseChanges: body.allowResponseChanges,
+    timerSeconds: timerSecs,
+    timerMode: mode,
+    timerStartedAt,
     questions: body.questions,
   });
   await applyLazyStatusUpdate(poll);
@@ -113,7 +133,29 @@ export async function updateOwnerPoll(
   pollId: string,
   body: UpdatePollBody,
 ) {
-  const poll = await assertMutablePoll(ownerId, pollId);
+  // ── timerSeconds is metadata-only — allow update even after responses ──
+  const hasTimer = body.timerSeconds !== undefined;
+  const hasStructuralChanges = body.title !== undefined ||
+    body.description !== undefined ||
+    body.expiresAt !== undefined ||
+    body.responseMode !== undefined ||
+    body.status !== undefined ||
+    body.allowCreatorResponses !== undefined ||
+    body.allowResponseChanges !== undefined ||
+    body.questions !== undefined;
+
+  let poll: PollDoc;
+  if (hasStructuralChanges) {
+    poll = await assertMutablePoll(ownerId, pollId);
+  } else {
+    // metadata-only update — just find the poll without the response guard
+    const found = await findOwnerPollById(ownerId, pollId);
+    if (!found) {
+      throw new HttpError(404, ERROR_CODES.NOT_FOUND, "Poll not found");
+    }
+    await applyLazyStatusUpdate(found);
+    poll = found;
+  }
 
   if (body.title !== undefined) {
     poll.title = body.title;
@@ -121,15 +163,35 @@ export async function updateOwnerPoll(
   if (body.description !== undefined) {
     poll.description = body.description ?? undefined;
   }
-  if (body.expiresAt !== undefined) {
-    poll.expiresAt = body.expiresAt;
-  }
   if (body.responseMode !== undefined) {
     poll.responseMode = body.responseMode;
   }
+  if (body.allowCreatorResponses !== undefined) {
+    poll.allowCreatorResponses = body.allowCreatorResponses;
+  }
+  if (body.allowResponseChanges !== undefined) {
+    poll.allowResponseChanges = body.allowResponseChanges;
+  }
+  if (hasTimer) {
+    poll.timerSeconds = body.timerSeconds ?? 0;
+  }
+  if (body.timerMode !== undefined) {
+    poll.timerMode = body.timerMode;
+  }
+
+  // ── status transition: draft → active ──────────────────────────────────
   if (body.status !== undefined) {
     if (body.status === "active" && poll.status === "draft") {
       poll.status = "active";
+      // Start the timer clock on activation if a timer is configured
+      const mode = poll.timerMode ?? "none";
+      const secs = poll.timerSeconds ?? 0;
+      if (secs > 0 && mode !== "none" && !poll.timerStartedAt) {
+        poll.timerStartedAt = new Date();
+        if (mode === "attached") {
+          poll.expiresAt = new Date(poll.timerStartedAt.getTime() + secs * 1000);
+        }
+      }
     } else if (body.status === "draft" && poll.status !== "draft") {
       throw new HttpError(
         409,
@@ -138,12 +200,15 @@ export async function updateOwnerPoll(
       );
     }
   }
-  if (body.allowCreatorResponses !== undefined) {
-    poll.allowCreatorResponses = body.allowCreatorResponses;
+
+  // ── expiresAt: only allow if NOT attached (attached is locked to timer) ─
+  if (body.expiresAt !== undefined) {
+    const mode = poll.timerMode ?? "none";
+    if (mode !== "attached") {
+      poll.expiresAt = body.expiresAt;
+    }
   }
-  if (body.allowResponseChanges !== undefined) {
-    poll.allowResponseChanges = body.allowResponseChanges;
-  }
+
   if (body.questions !== undefined) {
     // Mongoose casts string IDs on embedded docs to ObjectId at save time.
     poll.questions = body.questions as unknown as PollDoc["questions"];
@@ -153,6 +218,7 @@ export async function updateOwnerPoll(
   await applyLazyStatusUpdate(poll);
   return toPollWire(poll);
 }
+
 
 export async function deleteOwnerPoll(ownerId: string, pollId: string) {
   const poll = await findOwnerPollById(ownerId, pollId);

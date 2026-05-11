@@ -33,6 +33,8 @@ export const createPollBodySchema = z.object({
   status: pollLifecycleStatusSchema.optional(),
   allowCreatorResponses: z.boolean().default(true).optional(),
   allowResponseChanges: z.boolean().default(false).optional(),
+  timerSeconds: z.number().int().min(0).max(3600).optional(),
+  timerMode: z.enum(["none", "attached", "detached"]).optional(),
   questions: z.array(pollQuestionInputSchema).min(1),
 });
 
@@ -63,6 +65,8 @@ export const updatePollBodySchema = z
     status: pollLifecycleStatusSchema.optional(),
     allowCreatorResponses: z.boolean().optional(),
     allowResponseChanges: z.boolean().optional(),
+    timerSeconds: z.number().int().min(0).max(3600).optional(),
+    timerMode: z.enum(["none", "attached", "detached"]).optional(),
     questions: z.array(pollQuestionUpdateInputSchema).min(1).optional(),
   })
   .refine((v) => Object.keys(v).length > 0, {
@@ -85,6 +89,9 @@ export const pollWireSchema = z.object({
   status: pollStatusSchema,
   allowCreatorResponses: z.boolean(),
   allowResponseChanges: z.boolean(),
+  timerSeconds: z.number().int().min(0).max(3600).optional(),
+  timerMode: z.enum(["none", "attached", "detached"]).optional(),
+  timerStartedAt: z.coerce.date().optional(),
   deletedAt: z.coerce.date().nullable().optional(),
   questions: z.array(
     z.object({

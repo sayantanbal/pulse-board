@@ -11,18 +11,22 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@hookform/resolvers": "^3.9.0",
     "@pulse-board/shared": "workspace:*",
     "@tanstack/react-query": "^5.59.0",
-    "@hookform/resolvers": "^3.9.0",
     "axios": "^1.16.0",
+    "canvas-confetti": "^1.9.4",
+    "framer-motion": "^12.38.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hook-form": "^7.52.2",
     "react-router-dom": "^6.28.2",
     "socket.io-client": "^4.8.3",
+    "sonner": "^2.0.7",
     "zod": "^3.24.4"
   },
   "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",

@@ -24,6 +24,9 @@ export type PollProps = {
   status: PollStatus;
   allowCreatorResponses: boolean;
   allowResponseChanges: boolean;
+  timerSeconds?: number;
+  timerMode?: "none" | "attached" | "detached";
+  timerStartedAt?: Date;
   questions: PollQuestionSub[];
   deletedAt?: Date | null;
   createdAt: Date;
@@ -74,6 +77,9 @@ const pollSchema = new Schema<PollProps>(
     },
     allowCreatorResponses: { type: Boolean, required: true, default: true },
     allowResponseChanges: { type: Boolean, required: true, default: false },
+    timerSeconds: { type: Number, default: 0 },
+    timerMode: { type: String, enum: ["none", "attached", "detached"], default: "none" },
+    timerStartedAt: { type: Date, default: null },
     questions: { type: [questionSchema], required: true },
     deletedAt: { type: Date, default: null },
   },

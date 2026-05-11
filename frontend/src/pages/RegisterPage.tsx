@@ -3,12 +3,17 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import axios from "axios";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 
 export function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const state = location.state as { from?: { pathname?: string; search?: string } } | null;
+  const redirectTo = state?.from
+    ? `${state.from.pathname || ""}${state.from.search || ""}`
+    : "/app/polls";
 
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -27,7 +32,7 @@ export function RegisterPage() {
 
     try {
       await register(values);
-      navigate("/app/polls", { replace: true });
+      navigate(redirectTo, { replace: true });
     } catch (err) {
       if (axios.isAxiosError(err)) {
         const message = err.response?.data?.message ?? err.message;
@@ -87,7 +92,7 @@ export function RegisterPage() {
           </button>
         </form>
         <p className="muted">
-          Already have an account? <Link to="/login">Sign in</Link>.
+          Already have an account? <Link to="/login" state={state}>Sign in</Link>.
         </p>
       </section>
     </main>

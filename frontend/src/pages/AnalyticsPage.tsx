@@ -401,6 +401,20 @@ export function AnalyticsPage() {
               {publishing ? "Publishing..." : "Publish results"}
             </button>
           ) : null}
+          {analytics.status === "active" ? (
+            <Link
+              className="button"
+              to={`/app/polls/${pollId}/live`}
+              style={{
+                background: "linear-gradient(135deg, #ef4444, #f97316)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.4rem",
+              }}
+            >
+              🔴 Go Live
+            </Link>
+          ) : null}
           <Link className="button ghost" to={`/app/polls/${pollId}/edit`}>
             Edit poll
           </Link>
@@ -423,6 +437,7 @@ export function AnalyticsPage() {
           </button>
         </div>
       </div>
+
 
       {publishNotice ? <p className="muted">{publishNotice}</p> : null}
       {publishError ? <p className="muted">{publishError}</p> : null}
