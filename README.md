@@ -1,28 +1,33 @@
 # Pulse Board
 
-Full-stack polling platform with authentication, poll creation, public sharing, response collection, analytics, publishing, and live updates.
+Pulse Board is a shipped full-stack polling platform for creating polls, sharing public response links, collecting single-choice answers, publishing results, and watching live analytics update through WebSockets.
 
-## Workspace layout
+Production:
 
-- frontend: React + Vite app
-- backend: Express API + Socket.IO
-- packages/shared: Zod schemas and shared types
+- Frontend: https://pulseboard.sayantanbal.in/
+- Backend: https://pulse-board-backend-600719163026.asia-south1.run.app
 
-## Requirements
+Full project documentation: [docs/PROJECT_DOCUMENTATION.md](docs/PROJECT_DOCUMENTATION.md)
 
-- Node.js
-- pnpm
-- MongoDB instance
+## Workspace
 
-## Setup
+- `frontend`: React, Vite, TypeScript, React Router, TanStack Query, React Hook Form, custom CSS
+- `backend`: Node.js, Express, TypeScript, MongoDB, Mongoose, Socket.IO
+- `packages/shared`: shared Zod schemas, API wire types, constants, and error codes
 
-1. Install dependencies:
+The repository uses pnpm workspaces:
 
 ```bash
 pnpm install
+pnpm dev:backend
+pnpm dev:frontend
+pnpm build
+pnpm typecheck
 ```
 
-2. Configure backend env in backend/.env:
+## Local Setup
+
+Create `backend/.env`:
 
 ```bash
 MONGODB_URI=mongodb://127.0.0.1:27017/pulse-board
@@ -32,33 +37,37 @@ JWT_REFRESH_SECRET=replace-with-32-plus-chars
 PORT=3000
 ```
 
-3. Optional frontend env in frontend/.env:
+Optional `frontend/.env`:
 
 ```bash
 VITE_API_BASE=http://localhost:3000
 VITE_SOCKET_BASE=http://localhost:3000
 ```
 
-## Development
+In development, the Vite server also proxies `/api` and `/socket.io` to the backend.
 
-Run each app in separate terminals:
+## Deployment
+
+The current deployment uses Google Cloud:
+
+- Firebase Hosting serves `frontend/dist`.
+- Cloud Run runs the backend container built from `Dockerfile`.
+- MongoDB is the persistence layer.
+
+Important production env vars:
 
 ```bash
-pnpm dev:backend
-pnpm dev:frontend
+NODE_ENV=production
+PORT=8080
+MONGODB_URI=...
+FRONTEND_ORIGIN=https://pulseboard.sayantanbal.in
+JWT_ACCESS_SECRET=...
+JWT_REFRESH_SECRET=...
 ```
 
-The frontend runs on http://localhost:5173 and proxies API requests to /api when configured.
-
-## Build
+Frontend build env:
 
 ```bash
-pnpm build
+VITE_API_BASE=https://pulse-board-backend-600719163026.asia-south1.run.app
+VITE_SOCKET_BASE=https://pulse-board-backend-600719163026.asia-south1.run.app
 ```
-
-## Deployment notes
-
-- Build frontend with `pnpm --filter @pulse-board/frontend build` and serve the dist output.
-- Start the backend with `pnpm --filter @pulse-board/backend start` and set all required env vars.
-- Ensure `FRONTEND_ORIGIN` matches the deployed frontend URL so cookies are accepted.
-- Configure `VITE_API_BASE` and `VITE_SOCKET_BASE` to point at the deployed backend.
