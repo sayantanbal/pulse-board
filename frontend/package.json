@@ -17,6 +17,7 @@
     "axios": "^1.16.0",
     "canvas-confetti": "^1.9.4",
     "framer-motion": "^12.38.0",
+    "lucide-react": "^0.482.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-hook-form": "^7.52.2",

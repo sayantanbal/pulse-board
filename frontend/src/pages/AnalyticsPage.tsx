@@ -3,6 +3,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  Copy,
+  Link2,
+  Pencil,
+  Radio,
+  Share2,
+  UploadCloud,
+} from "lucide-react";
 import { apiClient } from "../data/api/client";
 import { usePollLinks } from "../data/usePollLinks";
 import {
@@ -276,6 +285,7 @@ export function AnalyticsPage() {
 
   const summary = analytics?.summary ?? null;
   const timeSeries = analytics?.timeSeries ?? [];
+  const showTimeSeries = analytics?.status !== "expired";
 
   const metrics = useMemo(() => {
     if (!summary) {
@@ -327,15 +337,16 @@ export function AnalyticsPage() {
     }
   };
 
-
-
   if (!pollId) {
     return (
       <section className="card stack">
         <h2 style={{ margin: 0 }}>Analytics</h2>
         <p className="muted">That link does not look like a valid poll id.</p>
-        <Link className="button" to="/app/polls">
-          Back to polls
+        <Link className="button ghost" to="/app/polls">
+          <span className="button-content">
+            <ArrowLeft size={16} />
+            Back to polls
+          </span>
         </Link>
       </section>
     );
@@ -368,8 +379,11 @@ export function AnalyticsPage() {
         <p className="muted">
           {errorMessage || "Analytics data is unavailable."}
         </p>
-        <Link className="button" to="/app/polls">
-          Back to polls
+        <Link className="button ghost" to="/app/polls">
+          <span className="button-content">
+            <ArrowLeft size={16} />
+            Back to polls
+          </span>
         </Link>
       </section>
     );
@@ -378,19 +392,59 @@ export function AnalyticsPage() {
   return (
     <section className="card stack">
       <div className="split">
-        <div>
+        <div className="stack" style={{ gap: "0.35rem" }}>
           <h2 style={{ margin: 0 }}>{poll?.title ?? "Poll analytics"}</h2>
           {poll?.description ? (
             <p className="muted" style={{ marginTop: "0.35rem" }}>
               {poll.description}
             </p>
           ) : null}
+          <div className="row">
+            <span className="pill">Status: {analytics.status}</span>
+            {lastSocketEvent ? (
+              <span className="muted">Live: {lastSocketEvent}</span>
+            ) : null}
+          </div>
         </div>
-        <div className="row">
-          <span className="pill">Status: {analytics.status}</span>
-          {lastSocketEvent ? (
-            <span className="muted">Live: {lastSocketEvent}</span>
-          ) : null}
+        <div className="nav-actions">
+          <Link className="button ghost" to="/app/polls">
+            <span className="button-content">
+              <ArrowLeft size={16} />
+              Back to polls
+            </span>
+          </Link>
+          <Link className="button ghost" to={`/app/polls/${pollId}/edit`}>
+            <span className="button-content">
+              <Pencil size={16} />
+              Edit poll
+            </span>
+          </Link>
+          <Link className="button ghost" to={`/p/${pollId}`}>
+            <span className="button-content">
+              <Link2 size={16} />
+              Public link
+            </span>
+          </Link>
+          <button
+            className="button ghost"
+            type="button"
+            onClick={() => void handleCopyLink()}
+          >
+            <span className="button-content">
+              <Copy size={16} />
+              Copy link
+            </span>
+          </button>
+          <button
+            className="button ghost"
+            type="button"
+            onClick={() => void handleShareLink()}
+          >
+            <span className="button-content">
+              <Share2 size={16} />
+              Share
+            </span>
+          </button>
           {analytics.status !== "published" ? (
             <button
               className="button"
@@ -398,46 +452,22 @@ export function AnalyticsPage() {
               onClick={() => void handlePublish()}
               disabled={publishing}
             >
-              {publishing ? "Publishing..." : "Publish results"}
+              <span className="button-content">
+                <UploadCloud size={16} />
+                {publishing ? "Publishing..." : "Publish results"}
+              </span>
             </button>
           ) : null}
           {analytics.status === "active" ? (
-            <Link
-              className="button"
-              to={`/app/polls/${pollId}/live`}
-              style={{
-                background: "linear-gradient(135deg, #ef4444, #f97316)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.4rem",
-              }}
-            >
-              🔴 Go Live
+            <Link className="button live" to={`/app/polls/${pollId}/live`}>
+              <span className="button-content">
+                <Radio size={16} />
+                Go Live
+              </span>
             </Link>
           ) : null}
-          <Link className="button ghost" to={`/app/polls/${pollId}/edit`}>
-            Edit poll
-          </Link>
-          <Link className="button ghost" to={`/p/${pollId}`}>
-            Public link
-          </Link>
-          <button
-            className="button ghost"
-            type="button"
-            onClick={() => void handleCopyLink()}
-          >
-            Copy link
-          </button>
-          <button
-            className="button ghost"
-            type="button"
-            onClick={() => void handleShareLink()}
-          >
-            Share
-          </button>
         </div>
       </div>
-
 
       {publishNotice ? <p className="muted">{publishNotice}</p> : null}
       {publishError ? <p className="muted">{publishError}</p> : null}
@@ -459,29 +489,31 @@ export function AnalyticsPage() {
         </p>
       ) : null}
 
-      <div className="stack">
-        <h3 style={{ margin: 0 }}>Response rate over time</h3>
-        {timeSeries.length === 0 ? (
-          <p className="muted">No response history yet.</p>
-        ) : (
-          <div className="timeseries-table">
-            <div className="timeseries-row timeseries-header">
-              <span>Date</span>
-              <span>Complete</span>
-              <span>Partial</span>
-              <span>Total</span>
-            </div>
-            {timeSeries.map((point) => (
-              <div key={point.bucket} className="timeseries-row">
-                <span>{formatBucketDate(point.bucket)}</span>
-                <span>{point.totalCompleteResponses}</span>
-                <span>{point.totalPartialResponses}</span>
-                <span>{point.totalResponses}</span>
+      {showTimeSeries ? (
+        <div className="stack">
+          <h3 style={{ margin: 0 }}>Response rate over time</h3>
+          {timeSeries.length === 0 ? (
+            <p className="muted">No response history yet.</p>
+          ) : (
+            <div className="timeseries-table">
+              <div className="timeseries-row timeseries-header">
+                <span>Date</span>
+                <span>Complete</span>
+                <span>Partial</span>
+                <span>Total</span>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              {timeSeries.map((point) => (
+                <div key={point.bucket} className="timeseries-row">
+                  <span>{formatBucketDate(point.bucket)}</span>
+                  <span>{point.totalCompleteResponses}</span>
+                  <span>{point.totalPartialResponses}</span>
+                  <span>{point.totalResponses}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
 
       <div className="stack">
         {summary.questions.map((question, index) => (

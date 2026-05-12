@@ -133,11 +133,10 @@ export async function updateOwnerPoll(
   pollId: string,
   body: UpdatePollBody,
 ) {
-  // ── timerSeconds is metadata-only — allow update even after responses ──
+  // ── timerSeconds/expiresAt are metadata-only — allow update even after responses ──
   const hasTimer = body.timerSeconds !== undefined;
-  const hasStructuralChanges = body.title !== undefined ||
+  const hasLockedChanges = body.title !== undefined ||
     body.description !== undefined ||
-    body.expiresAt !== undefined ||
     body.responseMode !== undefined ||
     body.status !== undefined ||
     body.allowCreatorResponses !== undefined ||
@@ -145,7 +144,7 @@ export async function updateOwnerPoll(
     body.questions !== undefined;
 
   let poll: PollDoc;
-  if (hasStructuralChanges) {
+  if (hasLockedChanges) {
     poll = await assertMutablePoll(ownerId, pollId);
   } else {
     // metadata-only update — just find the poll without the response guard
@@ -154,6 +153,13 @@ export async function updateOwnerPoll(
       throw new HttpError(404, ERROR_CODES.NOT_FOUND, "Poll not found");
     }
     await applyLazyStatusUpdate(found);
+    if (found.status === "published") {
+      throw new HttpError(
+        409,
+        ERROR_CODES.CONFLICT,
+        "Published polls cannot be modified",
+      );
+    }
     poll = found;
   }
 
@@ -177,6 +183,25 @@ export async function updateOwnerPoll(
   }
   if (body.timerMode !== undefined) {
     poll.timerMode = body.timerMode;
+  }
+
+  const shouldRecomputeAttachedExpiry =
+    body.timerSeconds !== undefined || body.timerMode !== undefined;
+  if (shouldRecomputeAttachedExpiry) {
+    const mode = poll.timerMode ?? "none";
+    const secs = poll.timerSeconds ?? 0;
+    if (mode === "attached") {
+      if (
+        secs > 0 &&
+        (poll.status === "expired" ||
+          (poll.status === "active" && !poll.timerStartedAt))
+      ) {
+        poll.timerStartedAt = new Date();
+      }
+      if (poll.timerStartedAt && secs > 0) {
+        poll.expiresAt = new Date(poll.timerStartedAt.getTime() + secs * 1000);
+      }
+    }
   }
 
   // ── status transition: draft → active ──────────────────────────────────

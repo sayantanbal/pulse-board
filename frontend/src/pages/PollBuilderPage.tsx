@@ -24,6 +24,18 @@ import {
   type Control,
 } from "react-hook-form";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  Copy,
+  FileText,
+  Link2,
+  Play,
+  Plus,
+  Radio,
+  Save,
+  Share2,
+  Trash2,
+} from "lucide-react";
 import { z } from "zod";
 import { apiClient } from "../data/api/client";
 import { usePollLinks } from "../data/usePollLinks";
@@ -47,6 +59,8 @@ type PollFormValues = {
     }>;
   }>;
 };
+
+type DirtyFields = Partial<Record<keyof PollFormValues, unknown>>;
 
 const objectIdRegex = /^[a-f0-9]{24}$/i;
 
@@ -169,9 +183,10 @@ function buildCreatePayload(
   const mode = values.timerMode;
   const secs = values.timerSeconds;
   // Attached mode: expiry is computed server-side, send a placeholder far future date
-  const expiresAt = mode === "attached" && secs > 0
-    ? new Date(Date.now() + secs * 1000 + 5000) // server will override
-    : new Date(values.expiresAt);
+  const expiresAt =
+    mode === "attached" && secs > 0
+      ? new Date(Date.now() + secs * 1000 + 5000) // server will override
+      : new Date(values.expiresAt);
   return {
     title: values.title.trim(),
     description: description.length ? description : undefined,
@@ -194,9 +209,10 @@ function buildUpdatePayload(
   const description = values.description.trim();
   const mode = values.timerMode;
   const secs = values.timerSeconds;
-  const expiresAt = mode === "attached" && secs > 0
-    ? undefined // server controls expiry in attached mode
-    : new Date(values.expiresAt);
+  const expiresAt =
+    mode === "attached" && secs > 0
+      ? undefined // server controls expiry in attached mode
+      : new Date(values.expiresAt);
   return {
     title: values.title.trim(),
     description: description.length ? description : null,
@@ -209,6 +225,64 @@ function buildUpdatePayload(
     status,
     questions: buildQuestionPayload(values.questions, includeIds),
   } as UpdatePollBody;
+}
+
+function isFieldDirty(field: unknown): boolean {
+  if (field === true) {
+    return true;
+  }
+  if (!field) {
+    return false;
+  }
+  if (Array.isArray(field)) {
+    return field.some(isFieldDirty);
+  }
+  if (typeof field === "object") {
+    return Object.values(field as Record<string, unknown>).some(isFieldDirty);
+  }
+  return false;
+}
+
+function buildDirtyUpdatePayload(
+  values: PollFormValues,
+  dirtyFields: DirtyFields,
+): UpdatePollBody {
+  const payload: UpdatePollBody = {};
+  const description = values.description.trim();
+  const mode = values.timerMode;
+  const secs = values.timerSeconds;
+
+  if (isFieldDirty(dirtyFields.title)) {
+    payload.title = values.title.trim();
+  }
+  if (isFieldDirty(dirtyFields.description)) {
+    payload.description = description.length ? description : null;
+  }
+  if (isFieldDirty(dirtyFields.responseMode)) {
+    payload.responseMode = values.responseMode;
+  }
+  if (isFieldDirty(dirtyFields.allowCreatorResponses)) {
+    payload.allowCreatorResponses = values.allowCreatorResponses;
+  }
+  if (isFieldDirty(dirtyFields.allowResponseChanges)) {
+    payload.allowResponseChanges = values.allowResponseChanges;
+  }
+  if (isFieldDirty(dirtyFields.timerSeconds)) {
+    payload.timerSeconds = secs;
+  }
+  if (isFieldDirty(dirtyFields.timerMode)) {
+    payload.timerMode = mode;
+  }
+  if (isFieldDirty(dirtyFields.expiresAt)) {
+    if (!(mode === "attached" && secs > 0)) {
+      payload.expiresAt = new Date(values.expiresAt);
+    }
+  }
+  if (isFieldDirty(dirtyFields.questions)) {
+    payload.questions = buildQuestionPayload(values.questions, true);
+  }
+
+  return payload;
 }
 
 function formatErrorMessage(error: unknown, fallback: string): string {
@@ -262,7 +336,10 @@ function QuestionFields({
           onClick={() => removeQuestion(index)}
           disabled={disableRemove}
         >
-          Remove
+          <span className="button-content">
+            <Trash2 size={16} />
+            Remove
+          </span>
         </button>
       </div>
 
@@ -288,7 +365,10 @@ function QuestionFields({
             onClick={() => appendOption(createOption(""))}
             disabled={optionFields.length >= MAX_OPTIONS_PER_QUESTION}
           >
-            Add option
+            <span className="button-content">
+              <Plus size={16} />
+              Add option
+            </span>
           </button>
         </div>
 
@@ -305,7 +385,10 @@ function QuestionFields({
               onClick={() => removeOption(optionIndex)}
               disabled={optionFields.length <= 2}
             >
-              Remove
+              <span className="button-content">
+                <Trash2 size={16} />
+                Remove
+              </span>
             </button>
           </div>
         ))}
@@ -344,7 +427,7 @@ export function PollBuilderPage() {
     handleSubmit,
     reset,
     watch,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<PollFormValues>({
     resolver: zodResolver(pollFormSchema),
     defaultValues: createEmptyPoll(),
@@ -426,6 +509,7 @@ export function PollBuilderPage() {
 
   const saving =
     isSubmitting || createMutation.isPending || updateMutation.isPending;
+  const PrimaryActionIcon = isEdit ? Save : Plus;
 
   const onSave = handleSubmit(async (values) => {
     setError(null);
@@ -433,7 +517,11 @@ export function PollBuilderPage() {
 
     try {
       if (isEdit && pollId) {
-        const payload = buildUpdatePayload(values, true);
+        const payload = buildDirtyUpdatePayload(values, dirtyFields);
+        if (Object.keys(payload).length === 0) {
+          setNotice("No changes to save.");
+          return;
+        }
         const validation = updatePollBodySchema.safeParse(payload);
         if (!validation.success) {
           setError(validation.error.issues[0]?.message ?? "Validation failed.");
@@ -494,8 +582,11 @@ export function PollBuilderPage() {
         <h1 className="title">Poll builder</h1>
         <div className="card stack">
           <p className="muted">That link does not look like a valid poll id.</p>
-          <Link className="button" to="/app/polls">
-            Back to polls
+          <Link className="button ghost" to="/app/polls">
+            <span className="button-content">
+              <ArrowLeft size={16} />
+              Back to polls
+            </span>
           </Link>
         </div>
       </main>
@@ -516,13 +607,19 @@ export function PollBuilderPage() {
             <span className="pill">Status: {pollStatus}</span>
           ) : null}
         </div>
-        <div className="row">
+        <div className="nav-actions">
           <Link className="button ghost" to="/app/polls">
-            Back to polls
+            <span className="button-content">
+              <ArrowLeft size={16} />
+              Back to polls
+            </span>
           </Link>
           {pollId && pollStatus !== "draft" ? (
             <Link className="button ghost" to={`/p/${pollId}`}>
-              Public link
+              <span className="button-content">
+                <Link2 size={16} />
+                Public link
+              </span>
             </Link>
           ) : null}
           {pollId && pollStatus !== "draft" ? (
@@ -531,7 +628,10 @@ export function PollBuilderPage() {
               type="button"
               onClick={() => void handleCopyLink()}
             >
-              Copy link
+              <span className="button-content">
+                <Copy size={16} />
+                Copy link
+              </span>
             </button>
           ) : null}
           {pollId && pollStatus !== "draft" ? (
@@ -540,7 +640,10 @@ export function PollBuilderPage() {
               type="button"
               onClick={() => void handleShareLink()}
             >
-              Share
+              <span className="button-content">
+                <Share2 size={16} />
+                Share
+              </span>
             </button>
           ) : null}
         </div>
@@ -557,12 +660,12 @@ export function PollBuilderPage() {
         <section className="card stack">
           <h2 style={{ margin: 0 }}>Poll details</h2>
           <label className="field">
-              <span>Title</span>
-              <input className="input" {...register("title")} />
-              {errors.title?.message ? (
-                <span className="muted">{errors.title.message}</span>
-              ) : null}
-            </label>
+            <span>Title</span>
+            <input className="input" {...register("title")} />
+            {errors.title?.message ? (
+              <span className="muted">{errors.title.message}</span>
+            ) : null}
+          </label>
 
           <label className="field">
             <span>Description</span>
@@ -596,14 +699,16 @@ export function PollBuilderPage() {
               </label>
               {timerModeValue === "attached" && (
                 <p className="muted" style={{ fontSize: "0.82rem", margin: 0 }}>
-                  ⚠️ Expiry will be set to <strong>now + {timerSecondsValue}s</strong> when the poll
+                  ⚠️ Expiry will be set to{" "}
+                  <strong>now + {timerSecondsValue}s</strong> when the poll
                   activates. You cannot change it afterwards.
                 </p>
               )}
               {timerModeValue === "detached" && (
                 <p className="muted" style={{ fontSize: "0.82rem", margin: 0 }}>
-                  Respondents' current answers will be auto-submitted when the timer reaches 0,
-                  even if incomplete. Poll stays open until its expiry.
+                  Respondents' current answers will be auto-submitted when the
+                  timer reaches 0, even if incomplete. Poll stays open until its
+                  expiry.
                 </p>
               )}
             </div>
@@ -611,9 +716,14 @@ export function PollBuilderPage() {
 
           <div className="field">
             <label className="field">
-              <span style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
                 <span>⏱ Timer (seconds)</span>
-                <span className="muted" style={{ fontSize: "0.8rem", fontWeight: 400 }}>
+                <span
+                  className="muted"
+                  style={{ fontSize: "0.8rem", fontWeight: 400 }}
+                >
                   0 = no timer
                 </span>
               </span>
@@ -649,8 +759,12 @@ export function PollBuilderPage() {
               ) : null}
             </label>
           ) : (
-            <div className="poll-card" style={{ fontSize: "0.85rem", color: "#475569" }}>
-              🔒 Expiry auto-set to <strong>now + {timerSecondsValue}s</strong> on activation
+            <div
+              className="poll-card"
+              style={{ fontSize: "0.85rem", color: "#475569" }}
+            >
+              🔒 Expiry auto-set to <strong>now + {timerSecondsValue}s</strong>{" "}
+              on activation
             </div>
           )}
 
@@ -678,7 +792,10 @@ export function PollBuilderPage() {
               type="button"
               onClick={() => appendQuestion(createQuestion())}
             >
-              Add question
+              <span className="button-content">
+                <Plus size={16} />
+                Add question
+              </span>
             </button>
           </div>
 
@@ -706,7 +823,10 @@ export function PollBuilderPage() {
             onClick={() => void onSave()}
             disabled={saving}
           >
-            {saving ? "Saving..." : isEdit ? "Save poll" : "Create poll"}
+            <span className="button-content">
+              <PrimaryActionIcon size={16} />
+              {saving ? "Saving..." : isEdit ? "Save poll" : "Create poll"}
+            </span>
           </button>
           {!isEdit ? (
             <button
@@ -715,7 +835,10 @@ export function PollBuilderPage() {
               onClick={() => void onSaveDraft()}
               disabled={saving}
             >
-              Save draft
+              <span className="button-content">
+                <FileText size={16} />
+                Save draft
+              </span>
             </button>
           ) : null}
           {isEdit && pollStatus === "draft" ? (
@@ -725,21 +848,18 @@ export function PollBuilderPage() {
               onClick={() => void onActivate()}
               disabled={saving}
             >
-              Activate poll
+              <span className="button-content">
+                <Play size={16} />
+                Activate poll
+              </span>
             </button>
           ) : null}
           {isEdit && pollId && pollStatus === "active" ? (
-            <Link
-              className="button"
-              to={`/app/polls/${pollId}/live`}
-              style={{
-                background: "linear-gradient(135deg, #ef4444, #f97316)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "0.4rem",
-              }}
-            >
-              🔴 Go Live
+            <Link className="button live" to={`/app/polls/${pollId}/live`}>
+              <span className="button-content">
+                <Radio size={16} />
+                Go Live
+              </span>
             </Link>
           ) : null}
         </div>

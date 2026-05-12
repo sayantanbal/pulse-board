@@ -4,13 +4,16 @@ import axios from "axios";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate, useLocation } from "react-router-dom";
+import { UserPlus } from "lucide-react";
 import { useAuth } from "../auth/AuthProvider";
 
 export function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const state = location.state as { from?: { pathname?: string; search?: string } } | null;
+  const state = location.state as {
+    from?: { pathname?: string; search?: string };
+  } | null;
   const redirectTo = state?.from
     ? `${state.from.pathname || ""}${state.from.search || ""}`
     : "/app/polls";
@@ -88,11 +91,18 @@ export function RegisterPage() {
           </label>
           {error ? <p className="muted">{error}</p> : null}
           <button className="button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Creating…" : "Create account"}
+            <span className="button-content">
+              <UserPlus size={16} />
+              {isSubmitting ? "Creating…" : "Create account"}
+            </span>
           </button>
         </form>
         <p className="muted">
-          Already have an account? <Link to="/login" state={state}>Sign in</Link>.
+          Already have an account?{" "}
+          <Link to="/login" state={state}>
+            Sign in
+          </Link>
+          .
         </p>
       </section>
     </main>

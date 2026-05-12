@@ -1,13 +1,8 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
-
-const baseURL =
-  typeof import.meta.env.VITE_API_BASE === "string" &&
-  import.meta.env.VITE_API_BASE.length > 0
-    ? import.meta.env.VITE_API_BASE
-    : "/api";
+import { clientEnv } from "../../config/env";
 
 export const apiClient = axios.create({
-  baseURL,
+  baseURL: clientEnv.apiBase,
   withCredentials: true,
   headers: { "Content-Type": "application/json" },
 });

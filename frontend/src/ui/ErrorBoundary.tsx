@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Component } from "react";
+import { RefreshCcw } from "lucide-react";
 
 type ErrorBoundaryProps = {
   children: ReactNode;
@@ -42,7 +43,10 @@ export class ErrorBoundary extends Component<
               type="button"
               onClick={this.handleReload}
             >
-              Reload
+              <span className="button-content">
+                <RefreshCcw size={16} />
+                Reload
+              </span>
             </button>
           </div>
         </main>

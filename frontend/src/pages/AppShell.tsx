@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
+import { LogOut } from "lucide-react";
 import { useAuth } from "../auth/AuthProvider";
 import { ThemeToggle } from "../ui/ThemeToggle";
 
@@ -14,7 +15,7 @@ export function AppShell() {
             Manage polls, track answers, publish results.
           </p>
         </div>
-        <div className="row" style={{ gap: "0.75rem", alignItems: "center" }}>
+        <div className="nav-actions">
           <ThemeToggle />
           <span className="pill">{user?.email ?? "Signed in"}</span>
           <button
@@ -22,14 +23,27 @@ export function AppShell() {
             type="button"
             onClick={() => void logout()}
           >
-            Sign out
+            <span className="button-content">
+              <LogOut size={16} />
+              Sign out
+            </span>
           </button>
         </div>
       </header>
 
       <nav className="app-nav">
-        <NavLink to="/app/polls">Polls</NavLink>
-        <NavLink to="/app/polls/new">New poll</NavLink>
+        <NavLink
+          to="/app/polls"
+          end
+          className={({ isActive }) =>
+            `button ghost${isActive ? " active" : ""}`
+          }
+        >
+          Polls
+        </NavLink>
+        <NavLink to="/app/polls/new" className="button">
+          New poll
+        </NavLink>
       </nav>
 
       <Outlet />

@@ -1,4 +1,5 @@
 import { io, type Socket } from "socket.io-client";
+import { clientEnv } from "../../config/env";
 
 export type DeltaPayload = {
   questionId: string;
@@ -27,11 +28,9 @@ export function getAnalyticsSocket(): Socket {
     return socket;
   }
 
-  const base =
-    typeof import.meta.env.VITE_SOCKET_BASE === "string" &&
-    import.meta.env.VITE_SOCKET_BASE.length > 0
-      ? import.meta.env.VITE_SOCKET_BASE
-      : undefined;
+  const base = clientEnv.socketBase.length > 0
+    ? clientEnv.socketBase
+    : undefined;
 
   socket = io(`${base ?? ""}/analytics`, {
     withCredentials: true,

@@ -4,6 +4,7 @@ import axios from "axios";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { LogIn } from "lucide-react";
 import { useAuth } from "../auth/AuthProvider";
 
 type LocationState = {
@@ -92,11 +93,18 @@ export function LoginPage() {
           </label>
           {error ? <p className="muted">{error}</p> : null}
           <button className="button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Signing in…" : "Sign in"}
+            <span className="button-content">
+              <LogIn size={16} />
+              {isSubmitting ? "Signing in…" : "Sign in"}
+            </span>
           </button>
         </form>
         <p className="muted">
-          New here? <Link to="/register" state={state}>Create an account</Link>.
+          New here?{" "}
+          <Link to="/register" state={state}>
+            Create an account
+          </Link>
+          .
         </p>
       </section>
     </main>

@@ -1,7 +1,7 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
-import { env } from "./config/env.js";
+import { runtimeConfig } from "./config/runtime.js";
 import { errorHandler } from "./policies/errorHandler.js";
 import { installRoutes } from "./routes/index.js";
 
@@ -10,7 +10,7 @@ export function createApp(): express.Express {
 
   app.use(
     cors({
-      origin: env.FRONTEND_ORIGIN,
+      origin: runtimeConfig.corsOrigin,
       credentials: true,
     }),
   );

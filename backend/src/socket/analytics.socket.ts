@@ -1,6 +1,6 @@
 import type { Server as HttpServer } from "node:http";
 import { Server } from "socket.io";
-import { env } from "../config/env.js";
+import { runtimeConfig } from "../config/runtime.js";
 
 const ANALYTICS_NAMESPACE = "/analytics";
 
@@ -34,7 +34,7 @@ export function attachAnalyticsSocket(httpServer: HttpServer): Server {
 
   io = new Server(httpServer, {
     cors: {
-      origin: env.FRONTEND_ORIGIN,
+      origin: runtimeConfig.corsOrigin,
       credentials: true,
     },
   });

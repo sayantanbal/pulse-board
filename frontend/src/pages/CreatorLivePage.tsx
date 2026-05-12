@@ -1,6 +1,7 @@
 import type { PollWire } from "@pulse-board/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
 import { apiClient } from "../data/api/client";
 import {
   getAnalyticsSocket,
@@ -115,13 +116,17 @@ function TimerRing({
     <div className="clp-timer-ring-wrap">
       <svg width="88" height="88" viewBox="0 0 88 88">
         <circle
-          cx="44" cy="44" r={radius}
+          cx="44"
+          cy="44"
+          r={radius}
           fill="none"
           stroke="rgba(255,255,255,0.08)"
           strokeWidth="7"
         />
         <circle
-          cx="44" cy="44" r={radius}
+          cx="44"
+          cy="44"
+          r={radius}
           fill="none"
           stroke={isDone ? "#64748b" : isUrgent ? "#ef4444" : "#22c55e"}
           strokeWidth="7"
@@ -129,7 +134,9 @@ function TimerRing({
           strokeDasharray={circumference}
           strokeDashoffset={strokeDashoffset}
           transform="rotate(-90 44 44)"
-          style={{ transition: "stroke-dashoffset 1s linear, stroke 0.5s ease" }}
+          style={{
+            transition: "stroke-dashoffset 1s linear, stroke 0.5s ease",
+          }}
         />
       </svg>
       <div
@@ -186,12 +193,13 @@ function LiveBarChart({
             totalResponses > 0
               ? Math.round((option.count / totalResponses) * 100)
               : 0;
-          const barWidth =
-            maxCount > 0 ? (option.count / maxCount) * 100 : 0;
+          const barWidth = maxCount > 0 ? (option.count / maxCount) * 100 : 0;
           const color = OPTION_COLORS[i % OPTION_COLORS.length] ?? "#94a3b8";
           return (
             <div key={option.optionId} className="clp-bar-row">
-              <span className="clp-bar-label">{String.fromCharCode(65 + i)}</span>
+              <span className="clp-bar-label">
+                {String.fromCharCode(65 + i)}
+              </span>
               <div className="clp-bar-track">
                 <div
                   className="clp-bar-fill"
@@ -213,11 +221,7 @@ function LiveBarChart({
   );
 }
 
-function Leaderboard({
-  data,
-}: {
-  data: LeaderboardData | null;
-}) {
+function Leaderboard({ data }: { data: LeaderboardData | null }) {
   if (!data) {
     return (
       <div className="clp-leaderboard">
@@ -257,8 +261,7 @@ function Leaderboard({
       <div className="clp-lb-list">
         {entries.map((entry) => {
           const barWidth = (entry.score / maxScore) * 100;
-          const color =
-            LEADERBOARD_COLORS[entry.rank - 1] ?? "#94a3b8";
+          const color = LEADERBOARD_COLORS[entry.rank - 1] ?? "#94a3b8";
           return (
             <div key={entry.rank} className="clp-lb-row">
               <span className="clp-lb-rank">{entry.rank}</span>
@@ -290,8 +293,7 @@ function Leaderboard({
 
 export function CreatorLivePage() {
   const { id } = useParams();
-  const pollId =
-    typeof id === "string" && objectIdRegex.test(id) ? id : null;
+  const pollId = typeof id === "string" && objectIdRegex.test(id) ? id : null;
 
   const [poll, setPoll] = useState<PollWire | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsResponse | null>(null);
@@ -328,7 +330,9 @@ export function CreatorLivePage() {
         // Initialise timer from server-stamped start time
         const t = pollData.poll.timerSeconds ?? 0;
         const startedAt = pollData.poll.timerStartedAt;
-        setTimerRemaining(computeRemaining(t, startedAt ? new Date(startedAt) : undefined));
+        setTimerRemaining(
+          computeRemaining(t, startedAt ? new Date(startedAt) : undefined),
+        );
       } catch {
         /* silent — show empty state */
       } finally {
@@ -421,9 +425,7 @@ export function CreatorLivePage() {
             questions: prev.summary.questions.map((q) => {
               const sq = snapshotMap.get(q.questionId);
               if (!sq) return q;
-              const optMap = new Map(
-                sq.options.map((o) => [o.optionId, o]),
-              );
+              const optMap = new Map(sq.options.map((o) => [o.optionId, o]));
               return {
                 ...q,
                 options: q.options.map((o) => {
@@ -497,8 +499,11 @@ export function CreatorLivePage() {
     return (
       <div className="clp-page">
         <p style={{ color: "#94a3b8" }}>Invalid poll ID.</p>
-        <Link className="button" to="/app/polls">
-          Back to polls
+        <Link className="button ghost" to="/app/polls">
+          <span className="button-content">
+            <ArrowLeft size={16} />
+            Back to polls
+          </span>
         </Link>
       </div>
     );
@@ -517,8 +522,11 @@ export function CreatorLivePage() {
     return (
       <div className="clp-page clp-center">
         <p style={{ color: "#ef4444" }}>Failed to load poll data.</p>
-        <Link className="button" to="/app/polls">
-          Back to polls
+        <Link className="button ghost" to="/app/polls">
+          <span className="button-content">
+            <ArrowLeft size={16} />
+            Back to polls
+          </span>
         </Link>
       </div>
     );
@@ -533,14 +541,14 @@ export function CreatorLivePage() {
           <LiveBadge />
           <span className="clp-topbar-title">{poll.title}</span>
         </div>
-        <div className="clp-topbar-right">
-          <Link
-            className="clp-back-btn"
-            to={`/app/polls/${pollId}/analytics`}
-          >
-            ← Analytics
+        <div className="clp-topbar-right nav-actions">
+          <Link className="button ghost" to={`/app/polls/${pollId}/analytics`}>
+            <span className="button-content">
+              <ArrowLeft size={16} />
+              Analytics
+            </span>
           </Link>
-          <Link className="clp-back-btn" to={`/app/polls/${pollId}/edit`}>
+          <Link className="button ghost" to={`/app/polls/${pollId}/edit`}>
             Edit poll
           </Link>
         </div>
@@ -582,13 +590,22 @@ export function CreatorLivePage() {
 
             {/* auto-countdown timer */}
             {timerTotal > 0 && poll.timerStartedAt && (
-              <div className="clp-timer-row" style={{ justifyContent: "flex-start" }}>
+              <div
+                className="clp-timer-row"
+                style={{ justifyContent: "flex-start" }}
+              >
                 <TimerRing
                   seconds={timerRemaining}
                   total={timerTotal}
                   mode={timerMode !== "none" ? timerMode : undefined}
                 />
-                <div style={{ fontSize: "0.8rem", color: "#64748b", marginLeft: "0.5rem" }}>
+                <div
+                  style={{
+                    fontSize: "0.8rem",
+                    color: "#64748b",
+                    marginLeft: "0.5rem",
+                  }}
+                >
                   {timerMode === "attached" && timerRemaining > 0 && (
                     <span>Poll closes when timer ends</span>
                   )}
