@@ -6,3 +6,8 @@ dist
 .DS_Store
 coverage
 *.log
+access_secret.txt
+frontend_secret.txt
+mongo_secret.txt
+refresh_secret.txt
+.firebase/

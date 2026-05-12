@@ -7,10 +7,11 @@ export const COOKIE_REFRESH = "refresh_token";
 export const COOKIE_ANON_SESSION = "anon_session";
 
 export function baseCookieOptions(env: Env): CookieOptions {
+  const isProd = env.NODE_ENV === "production";
   return {
     httpOnly: true,
-    secure: env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
     path: "/",
   };
 }

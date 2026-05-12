@@ -4,7 +4,11 @@ import type { Response as ExpressResponse } from "express";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import { randomUUID } from "crypto";
-import { COOKIE_ACCESS, COOKIE_ANON_SESSION } from "../config/cookies.js";
+import {
+  baseCookieOptions,
+  COOKIE_ACCESS,
+  COOKIE_ANON_SESSION,
+} from "../config/cookies.js";
 import { env } from "../config/env.js";
 import { AggregateModel } from "../domain/aggregate.model.js";
 import type { PollDoc } from "../domain/poll.model.js";
@@ -401,10 +405,9 @@ export async function submitPublicPollResponse(input: {
    */
   if (poll.responseMode === "anonymous" && !anonSessionId) {
     const newSessionId = randomUUID();
+    const base = baseCookieOptions(env);
     input.res.cookie(COOKIE_ANON_SESSION, newSessionId, {
-      httpOnly: true,
-      secure: env.NODE_ENV === "production",
-      sameSite: "lax",
+      ...base,
       maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
     });
   }
