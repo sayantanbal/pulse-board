@@ -1,4 +1,4 @@
-﻿Poll Platform — Project Plan	Revised 2026-05-10
+﻿Poll Platform — Project Plan	Revised 2026-05-10 · documentation synced 2026-05-13
 
 
 # **1. Goals**
@@ -10,7 +10,7 @@
 # **2. Functional Requirements**
 ## **2.1 Authenticated Poll Creator**
 - Create polls: title, optional description, expiry datetime, response mode (anonymous | authenticated).
-- Add questions: prompt text, single-choice options, required/optional flag, display order.
+- Add questions: prompt text, single-choice options, required/optional flag, display order; optional **correct** option (`isCorrect`) per question for composite leaderboard scoring when any option is marked.
 - Edit and delete polls before first response is received.
 - View analytics dashboard: total responses, per-question option counts, completion rate, drop-off rate.
 - Publish final results; after publishing the public poll link switches to results view.
@@ -51,18 +51,18 @@
 # **5. Repository & Module Structure**
 ## **5.1 Monorepo Layout**
 
-|**Structure**  Three workspace packages share a root pnpm-workspace.yaml. The shared package is the contract layer — both frontend and backend import Zod schemas and TypeScript types from it.|
+|**Structure**  Three workspace packages share a root `pnpm-workspace.yaml` (including optional `allowBuilds` for toolchain deps). The shared package is the contract layer — both frontend and backend import Zod schemas and TypeScript types from it.|
 | :- |
 
 |**Path**|**Contents**|
 | :- | :- |
-|/packages/shared|Zod schemas, TS types, error codes, constants — imported by both apps|
-|/frontend/src/routes|Page components and layout composition|
-|/frontend/src/features|polls, responses, analytics, auth feature modules|
-|/frontend/src/ui|Design system, primitives, form wrappers|
-|/frontend/src/data|API client (axios), React Query hooks, Socket.IO client|
-|/frontend/src/utils|Formatters, guards, date helpers|
-|/backend/src/routes|Express routers + Socket.IO event handlers|
+|/packages/shared|Zod schemas, TS types, error codes, constants, analytics query helpers — imported by both apps|
+|/frontend/src/pages|Route screens (poll builder, analytics, live dashboard, public poll, auth)|
+|/frontend/src/auth|Auth provider and route guards|
+|/frontend/src/ui|Navigation, theme toggle, error boundary|
+|/frontend/src/data|API client (axios), hooks, Socket.IO client|
+|/backend/src/routes|Express routers (mounted paths include `/auth`, `/polls`, `/public`, `/analytics`, `/internal`)|
+|/backend/src/socket|Socket.IO `/analytics` namespace and room emit helpers|
 |/backend/src/services|Business logic and workflow orchestration|
 |/backend/src/repositories|Mongoose model access — one file per collection|
 |/backend/src/domain|Mongoose schemas, aggregates, invariants|
@@ -92,10 +92,13 @@
 |description|String, optional|
 |expiresAt|Date, indexed|
 |responseMode|Enum: anonymous | authenticated|
-|isPublished|Boolean, default false|
-|status|Enum: draft | active | expired | published — derived + stored|
-|questions|Array<{ \_id, prompt, isRequired, order, options: [{ \_id, text, order }] }>|
-|createdAt / updatedAt|Date (updatedAt needed for cache invalidation)|
+|status|Enum: draft | active | expired | published — stored; expiry can also transition active → expired lazily|
+|allowCreatorResponses|Boolean|
+|allowResponseChanges|Boolean|
+|timerSeconds, timerMode (none \| attached \| detached), timerStartedAt|Optional timer behavior|
+|questions|Array<{ \_id, prompt, isRequired, order, options: [{ \_id, text, order, isCorrect?: boolean }] }>|
+|deletedAt|Soft-delete timestamp, optional|
+|createdAt / updatedAt|Date|
 
 ## **6.3 Response**
 
@@ -140,7 +143,7 @@ Updated transactionally on each response submission. Socket.IO emits the delta. 
 |GET    /polls|List polls owned by current user|
 |GET    /polls/:id|Full poll with questions|
 |PATCH  /polls/:id|Update poll metadata or questions (before responses)|
-|DELETE /polls/:id|Delete poll (soft-delete or hard)|
+|DELETE /polls/:id|Delete poll when it has no responses (soft-delete via `deletedAt`)|
 |PATCH  /polls/:id/publish|Transition status to published — PATCH, not POST|
 
 ## **7.3 Public**
@@ -154,8 +157,15 @@ Updated transactionally on each response submission. Socket.IO emits the delta. 
 
 |**Method + Path**|**Notes**|
 | :- | :- |
-|GET /analytics/polls/:id|Full analytics: total, per-question counts, completion rate, drop-off — owner only|
-|GET /analytics/polls/:id/summary|Public summary — only available after publishing|
+|GET /analytics/polls/:id|Full analytics: total, per-question counts, completion rate, drop-off, time series — owner only|
+|GET /analytics/polls/:id/summary|Published summary — for published polls|
+|GET /analytics/polls/:id/leaderboard|Top leaderboard entries — owner only; speed-only or composite if options use `isCorrect` (see `SCORING_METRICS.md`)|
+
+## **7.5 Operations (internal)**
+
+|**Method + Path**|**Notes**|
+| :- | :- |
+|POST /internal/expire-polls|`Authorization: Bearer <INTERNAL_JOB_SECRET>` — expires active polls past `expiresAt` without waiting for traffic (optional Cloud Scheduler)|
 
 # **8. Frontend Routes**
 
@@ -167,7 +177,9 @@ Updated transactionally on each response submission. Socket.IO emits the delta. 
 |/app/polls/new|Poll builder (create)|
 |/app/polls/:id/edit|Poll builder (edit — disabled after first response)|
 |/app/polls/:id/analytics|Analytics dashboard with live Socket.IO updates|
+|/app/polls/:id/live|Creator live dashboard (timer, charts, leaderboard)|
 |/p/:id|Public responder or published results view|
+|/dev|Optional developer harness (non-production convenience)|
 
 # **9. Auth Flow Detail**
 - Access token: 15-minute expiry, stored in memory (React state) or short-lived httpOnly cookie.
@@ -187,10 +199,10 @@ Updated transactionally on each response submission. Socket.IO emits the delta. 
 - On transaction failure: call recomputeAggregates(pollId) as fallback, then emit full snapshot.
 
 ## **10.2 Client**
-- Analytics dashboard: socket.join(pollId) on mount, socket.leave on unmount.
-- On 'delta': update TanStack Query cache directly — no full refetch.
-- Public results page: same room subscription after poll is published.
-- Reconnection: on reconnect, refetch analytics via HTTP to reconcile any missed deltas.
+- Analytics dashboard: join poll room on mount, leave on unmount (Socket.IO client emits `join` / `leave` with `pollId`).
+- On `delta`: merge counts into local UI state (and/or invalidate queries where used).
+- Public poll page: same `/analytics` namespace subscription while poll status is **active** or **published** (live counts can update before formal publish).
+- Reconnection: on reconnect, refetch public poll or analytics via HTTP to reconcile any missed deltas.
 
 # **11. Validation Rules**
 - Zod schemas live in packages/shared/src/schemas — single source of truth.
@@ -200,7 +212,7 @@ Updated transactionally on each response submission. Socket.IO emits the delta. 
 - Expiry: backend checks expiresAt < now() on every submission — reject with 410 Gone.
 - Response mode: if responseMode = authenticated, reject submissions without valid JWT.
 - Max options per question: 10 (enforced in Zod schema and UI).
-- Anonymous dedup: hash(req.ip + req.headers['user-agent']) — reject duplicate hash per poll within 24 h window.
+- Anonymous dedup: prefer long-lived `anon_session` httpOnly cookie; fallback hash(IP + User-Agent) with a **24 h** lookback when matching existing responses per poll; cookie max-age is **30 days** (see shipped cookie policy).
 
 # **12. Drop-off / Completion Analytics**
 This was undeliverable in the original plan. The revised data model makes it computable:
@@ -253,7 +265,7 @@ This was undeliverable in the original plan. The revised data model makes it com
 |**Risk**|**Mitigation**|
 | :- | :- |
 |Aggregate out of sync on transaction failure|recomputeAggregates(pollId) fallback; emit full snapshot instead of delta|
-|Anonymous spam|SHA-256 hash of IP+UA per poll, 24h dedup window stored on Response doc|
+|Anonymous spam|Session cookie + SHA-256 hash of IP+UA; duplicate guard uses hash lookback (see `publicPoll.service`)|
 |Refresh token theft|Refresh token rotation: each use issues a new token and invalidates the old one|
 |Socket reconnect missed deltas|On reconnect, client triggers HTTP refetch of analytics to reconcile|
 |Partial submission beacon fails|beforeunload uses navigator.sendBeacon for reliability; accepted as best-effort|

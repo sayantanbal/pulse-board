@@ -11,7 +11,7 @@ The product is designed around these use cases:
 - A creator needs a fast way to build a poll with one or more single-choice questions.
 - Respondents need a simple public link that works without friction for anonymous polls.
 - Authenticated polls should only accept responses from signed-in users.
-- The creator needs live feedback, including counts, completion/drop-off metrics, response timing, and a speed-based leaderboard.
+- The creator needs live feedback, including counts, completion/drop-off metrics, response timing, and a leaderboard (speed-based by default, or accuracy-weighted when correct options are marked).
 - Published results should reuse the same public poll URL and show final aggregated results.
 
 ## 2. Shipped Solution
@@ -72,6 +72,9 @@ packages:
   - "packages/*"
   - "frontend"
   - "backend"
+allowBuilds:
+  "@heroui/shared-utils": set this to true or false
+  esbuild: true
 ```
 
 The root scripts coordinate package builds:
@@ -98,6 +101,7 @@ It currently exports:
 - common schemas such as ObjectId, poll status, response mode, and response status
 - poll create/update/wire schemas
 - public response submission schemas
+- analytics query schemas (e.g. owner analytics time-range / bucketing) and related types
 
 Current examples:
 
@@ -146,9 +150,11 @@ Polls embed questions and options directly inside the poll document:
 - `timerSeconds`
 - `timerMode`: `none`, `attached`, or `detached`
 - `timerStartedAt`
-- `questions`
+- `questions` (embedded): each has `prompt`, `isRequired`, `order`, and `options` array
 - `deletedAt`
 - timestamps
+
+Each embedded option has `text`, `order`, and optional `isCorrect`. If at least one option in the poll is marked `isCorrect: true`, the owner leaderboard uses a composite accuracy + speed score (see section 14). If no options are marked correct, scoring is speed-only.
 
 Embedded questions/options avoid extra joins for public poll loading and analytics display.
 
@@ -319,33 +325,26 @@ It displays:
 - live single-choice bar chart
 - countdown timer when configured
 - total live responses
-- speed-based leaderboard
-- average score display
+- leaderboard (speed-only, or accuracy + speed when options are marked correct)
+- average of the displayed leaderboard scores
 
 The live dashboard subscribes to the same Socket.IO analytics namespace as the analytics page. It applies incoming deltas directly to local UI state, and refreshes the leaderboard after each response.
 
-## 14. Speed-Based Metrics
+## 14. Leaderboard and scoring
 
-The leaderboard is speed-based, not accuracy-based. Options do not currently have correct/incorrect values.
+Authoritative detail lives in `SCORING_METRICS.md` (kept in the repo root). Summary:
 
-Backend calculation:
+- The API loads up to **300** complete responses for the poll (`createdAt` ascending + limit — the **earliest** up to 300 completes, not the latest 300).
+- **Speed score** for each response at index `i` (0-based) among that window:  
+  `Math.round(((total - i) / total) * 500)` where `total` is the number of responses in the window.
+- **Speed-only polls:** if no question has an option with `isCorrect: true`, the displayed **score** is the speed score. The API returns the **top 10** rows by speed score (equivalent to the first ten finishers in submission order when all speed scores differ).
+- **Scored polls:** if at least one option is marked `isCorrect: true`, the API defines “scored” questions and uses a **composite** display score:  
+  `Math.round((correct / scoredQuestionCount) * 500 * 0.65 + speedScore * 0.35)`.  
+  Rows are sorted by composite score descending, with ties broken by earlier `createdAt`; the **top 10** are returned.
 
-1. Fetch complete responses for the poll.
-2. Sort by `createdAt` ascending.
-3. Keep the top 10.
-4. Assign rank from fastest to slowest.
-5. Compute score:
+For authenticated polls, leaderboard names use the email local-part when known. For anonymous polls, names are `Anonymous #rank` after ranking.
 
-```ts
-Math.round(((total - index) / total) * 500)
-```
-
-Example with two complete responses:
-
-- rank 1: `500`
-- rank 2: `250`
-
-For authenticated polls, leaderboard names come from the email prefix. For anonymous polls, names are displayed as `Anonymous #rank`.
+*Implementation:* `getPollLeaderboard` in `backend/src/services/analytics.service.ts`.
 
 ## 15. WebSocket Design
 
@@ -694,6 +693,7 @@ Current shipped routes:
 
 - `/login`
 - `/register`
+- `/dev` (developer harness; not required for normal use)
 - `/app/polls`
 - `/app/polls/new`
 - `/app/polls/:id/edit`
@@ -712,6 +712,7 @@ Current shipped creator features:
 - view analytics
 - view live dashboard
 - publish results
+- optional correct answers per option (`isCorrect`) for composite leaderboard scoring when enabled
 - delete polls without responses through backend API
 
 Current shipped respondent features:

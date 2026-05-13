@@ -2,17 +2,19 @@
 
 This document outlines the current procedures for calculating leaderboard markings and average scores within the Pulse Board application.
 
+**See also:** [`docs/PROJECT_DOCUMENTATION.md`](docs/PROJECT_DOCUMENTATION.md) (section 14 — leaderboard and scoring).
+
 ## 1. Leaderboard Marking (Individual Scores)
 
-The leaderboard considers up to **300** most recent complete responses (by `createdAt`), computes a score for each, then shows the **top 10** after sorting.
+The leaderboard loads up to **300** complete responses with **`createdAt` ascending** and **`limit(300)`** — i.e. the **300 earliest** complete submissions still stored for the poll (not the latest 300). Each loaded row gets a speed score; then the API sorts and returns the **top 10**.
 
 ### Speed-only polls
 
 If **no** question has an option marked `isCorrect: true`, scoring is **speed-only**:
 
-- **Speed score:** among all complete responses sorted oldest-first, index `i` (0-based) gets  
-  `Math.round(((total - i) / total) * 500)` where `total` is the number of responses in that window.
-- **Display rank:** sort by speed score descending (same order as submission order for unique scores), take first 10; `score` shown is the speed score.
+- **Speed score:** within that loaded window only, index `i` (0-based, oldest row first) gets  
+  `Math.round(((total - i) / total) * 500)` where `total` is the number of responses in the window (≤ 300).
+- **Display rank:** sort by speed score descending, tie-break by earlier `createdAt`; take first 10; `score` shown is the speed score.
 
 ### Polls with marked correct answers
 
@@ -29,7 +31,7 @@ Names: authenticated polls use the email local-part; anonymous polls use `Anonym
 
 ## 2. Average Leaderboard Score (Live Dashboard)
 
-The **Avg leaderboard score** stat on the creator Live Dashboard is the **mean of the `score` values** for the current top-10 leaderboard entries returned by the API (same speed-based scores as section 1). If there are no leaderboard entries yet, the UI shows an em dash (—).
+The **Avg leaderboard score** stat on the creator Live Dashboard is the **mean of the `score` values** for the current top-10 leaderboard entries returned by the API (same scoring rules as section 1 — speed-only or composite). If there are no leaderboard entries yet, the UI shows an em dash (—).
 
 - **Formula:**
 
