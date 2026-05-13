@@ -1,4 +1,4 @@
-import { pollIdParamsSchema } from "@pulse-board/shared";
+import { analyticsPollQuerySchema, pollIdParamsSchema } from "@pulse-board/shared";
 import { Router } from "express";
 import { requireAuth } from "../policies/requireAuth.js";
 import { validateParams } from "../policies/validateParams.js";
@@ -20,9 +20,11 @@ analyticsRouter.get(
   validateParams(pollIdParamsSchema),
   async (req, res, next) => {
     try {
+      const seriesQuery = analyticsPollQuerySchema.parse(req.query);
       const analytics = await getOwnerPollAnalytics(
         req.user!.id,
         getPollIdParam(req.params.id),
+        seriesQuery,
       );
       res.status(200).json(analytics);
     } catch (e) {

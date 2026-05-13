@@ -1,6 +1,7 @@
 import type { CreatePollBody, PollWire, UpdatePollBody } from "@pulse-board/shared";
 import { ERROR_CODES } from "@pulse-board/shared";
 import type { PollDoc } from "../domain/poll.model.js";
+import { PollModel } from "../domain/poll.model.js";
 import { runPollStatusCheck } from "../domain/pollStatus.js";
 import { HttpError } from "../policies/httpError.js";
 import {
@@ -8,6 +9,7 @@ import {
   findOwnerPollById,
   hasAnyResponse,
   listOwnerPolls,
+  pollIdsWithResponses,
 } from "../repositories/poll.repository.js";
 
 function toPollWire(doc: PollDoc): PollWire {
@@ -34,6 +36,7 @@ function toPollWire(doc: PollDoc): PollWire {
         _id: o._id.toHexString(),
         text: o.text,
         order: o.order,
+        ...(o.isCorrect === true ? { isCorrect: true as const } : {}),
       })),
     })),
     createdAt: doc.createdAt,
@@ -110,12 +113,26 @@ export async function createPoll(ownerId: string, body: CreatePollBody) {
   return toPollWire(poll);
 }
 
+function withResponseMeta(
+  wire: PollWire,
+  hasResponses: boolean,
+): PollWire & { hasResponses: boolean; canDelete: boolean } {
+  return {
+    ...wire,
+    hasResponses,
+    canDelete: wire.status !== "published" && !hasResponses,
+  };
+}
+
 export async function getOwnerPolls(ownerId: string) {
   const polls = await listOwnerPolls(ownerId);
   for (const poll of polls) {
     await applyLazyStatusUpdate(poll);
   }
-  return polls.map(toPollWire);
+  const wires = polls.map(toPollWire);
+  const ids = polls.map((p) => p._id.toHexString());
+  const responded = await pollIdsWithResponses(ids);
+  return wires.map((w) => withResponseMeta(w, responded.has(w._id)));
 }
 
 export async function getOwnerPollById(ownerId: string, pollId: string) {
@@ -125,7 +142,9 @@ export async function getOwnerPollById(ownerId: string, pollId: string) {
   }
 
   await applyLazyStatusUpdate(poll);
-  return toPollWire(poll);
+  const wire = toPollWire(poll);
+  const responded = await hasAnyResponse(pollId);
+  return withResponseMeta(wire, responded);
 }
 
 export async function updateOwnerPoll(
@@ -242,6 +261,28 @@ export async function updateOwnerPoll(
   await poll.save();
   await applyLazyStatusUpdate(poll);
   return toPollWire(poll);
+}
+
+/** Background-style sweep: mark active polls past `expiresAt` as `expired`. */
+export async function expireDuePolls(): Promise<{ updated: number }> {
+  const now = new Date();
+  const candidates = await PollModel.find({
+    deletedAt: null,
+    status: "active",
+    expiresAt: { $lte: now },
+  });
+
+  let updated = 0;
+  for (const poll of candidates) {
+    const next = runPollStatusCheck(poll, now);
+    if (next !== poll.status) {
+      poll.status = next;
+      await poll.save();
+      updated += 1;
+    }
+  }
+
+  return { updated };
 }
 
 

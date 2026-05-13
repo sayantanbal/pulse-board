@@ -45,6 +45,14 @@ type PublicPollResult = {
 const objectIdRegex = /^[a-f0-9]{24}$/i;
 const submittedKeyPrefix = "poll-submitted:";
 
+function submittedMarkerKey(pollId: string): string {
+  return `${submittedKeyPrefix}${pollId}`;
+}
+
+function setSubmittedMarker(pollId: string): void {
+  sessionStorage.setItem(submittedMarkerKey(pollId), "1");
+}
+
 type EmptyStateKind = "expired" | "invalid" | "notFound" | "unknown";
 
 type EmptyStateConfig = {
@@ -106,7 +114,6 @@ export function PublicResultsPage() {
 
   const [poll, setPoll] = useState<PollWire | null>(null);
   const [summary, setSummary] = useState<PublicSummary | null>(null);
-  const [status, setStatus] = useState<PollWire["status"] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [errorKind, setErrorKind] = useState<EmptyStateKind | null>(null);
@@ -204,7 +211,6 @@ export function PublicResultsPage() {
         `/public/polls/${pollId}`,
       );
       setPoll(data.poll);
-      setStatus(data.poll.status);
       setSummary(data.summary ?? null);
     } catch (e) {
       if (axios.isAxiosError(e)) {
@@ -273,7 +279,7 @@ export function PublicResultsPage() {
             .post(`/public/polls/${poll._id}/responses`, payload)
             .then(() => {
               setSubmitted(true);
-              sessionStorage.setItem(`poll_submitted_${poll._id}`, "1");
+              setSubmittedMarker(poll._id);
             })
             .catch(() => null);
         }
@@ -290,7 +296,7 @@ export function PublicResultsPage() {
     if (!pollId) {
       return;
     }
-    const stored = sessionStorage.getItem(`${submittedKeyPrefix}${pollId}`);
+    const stored = sessionStorage.getItem(submittedMarkerKey(pollId));
     setSubmitted(stored === "1");
   }, [pollId]);
 
@@ -355,7 +361,11 @@ export function PublicResultsPage() {
   }, [poll, pollId]);
 
   useEffect(() => {
-    if (!pollId || status !== "published") {
+    if (
+      !pollId ||
+      !poll ||
+      (poll.status !== "published" && poll.status !== "active")
+    ) {
       socket.disconnect();
       return;
     }
@@ -428,7 +438,7 @@ export function PublicResultsPage() {
       socket.off("snapshot", onSnapshot);
       socket.io.off("reconnect", onReconnect);
     };
-  }, [fetchPublicPoll, pollId, socket, status]);
+  }, [fetchPublicPoll, pollId, poll, poll?.status, socket]);
 
   const triggerPartialSave = useCallback(
     (debounceMs: number) => {
@@ -492,7 +502,7 @@ export function PublicResultsPage() {
     setSubmitting(true);
     try {
       await apiClient.post(`/public/polls/${pollId}/responses`, payload);
-      sessionStorage.setItem(`${submittedKeyPrefix}${pollId}`, "1");
+      setSubmittedMarker(pollId);
       setSubmitted(true);
       if (blurDebounceRef.current) clearTimeout(blurDebounceRef.current);
       toast.success("Response submitted! 🎉", {
@@ -520,7 +530,6 @@ export function PublicResultsPage() {
           setSubmitError(msg);
           setError(msg);
           setErrorKind("expired");
-          setStatus("expired");
           setPoll((prev) => (prev ? { ...prev, status: "expired" } : prev));
           toast.info(msg);
         } else if (statusCode === 409) {
@@ -529,7 +538,7 @@ export function PublicResultsPage() {
             "A response from this session already exists.";
           setSubmitError(msg);
           toast.warning(msg);
-          sessionStorage.setItem(`${submittedKeyPrefix}${pollId}`, "1");
+          setSubmittedMarker(pollId);
           setSubmitted(true);
         } else {
           const msg = err.response?.data?.message ?? "Unable to submit.";
@@ -721,7 +730,8 @@ export function PublicResultsPage() {
                 </div>
               )}
 
-            {status === "published" && lastSocketEvent ? (
+            {(poll.status === "published" || poll.status === "active") &&
+            lastSocketEvent ? (
               <span className="muted">Live: {lastSocketEvent}</span>
             ) : null}
           </div>
@@ -729,10 +739,10 @@ export function PublicResultsPage() {
 
         <div className="card stack">
           {error ? <p className="muted">{error}</p> : null}
-          {poll.status !== "published" ? (
+          {poll.status === "active" ? (
             <p className="muted">
-              This poll is still collecting responses. Results appear here once
-              it is published.
+              Live totals below update as responses arrive. The host may still
+              publish a final results page later.
             </p>
           ) : null}
           {!user && poll.responseMode === "authenticated" ? (
@@ -842,13 +852,18 @@ export function PublicResultsPage() {
           </section>
         ) : null}
 
-        {poll.status === "published" ? (
+        {(poll.status === "published" || poll.status === "active") &&
+        summary ? (
           <section className="card stack">
             <div className="stack" style={{ gap: "0.35rem" }}>
               <span className="pill">
                 Total responses: {summary?.totalCompleteResponses ?? 0}
               </span>
-              <span className="muted">Updated with live deltas.</span>
+              <span className="muted">
+                {poll.status === "published"
+                  ? "Updated with live deltas."
+                  : "Live totals (may change until the poll closes)."}
+              </span>
             </div>
 
             <div className="stack">

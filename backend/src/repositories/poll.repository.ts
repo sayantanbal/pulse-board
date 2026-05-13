@@ -61,3 +61,16 @@ export async function hasAnyResponse(pollId: string): Promise<boolean> {
   const count = await ResponseModel.countDocuments({ pollId: toObjectId(pollId) });
   return count > 0;
 }
+
+/** Poll ids (hex) that have at least one response document. */
+export async function pollIdsWithResponses(pollIds: string[]): Promise<Set<string>> {
+  if (pollIds.length === 0) {
+    return new Set();
+  }
+  const oids = pollIds.map((id) => toObjectId(id));
+  const rows = await ResponseModel.aggregate<{ _id: mongoose.Types.ObjectId }>([
+    { $match: { pollId: { $in: oids } } },
+    { $group: { _id: "$pollId" } },
+  ]);
+  return new Set(rows.map((r) => r._id.toHexString()));
+}

@@ -5,6 +5,7 @@ export type PollOptionSub = {
   _id: mongoose.Types.ObjectId;
   text: string;
   order: number;
+  isCorrect?: boolean;
 };
 
 export type PollQuestionSub = {
@@ -39,6 +40,7 @@ const optionSchema = new Schema<PollOptionSub>(
   {
     text: { type: String, required: true },
     order: { type: Number, required: true },
+    isCorrect: { type: Boolean },
   },
   { _id: true },
 );

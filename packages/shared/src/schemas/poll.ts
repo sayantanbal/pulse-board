@@ -13,17 +13,29 @@ export type PollLifecycleStatus = z.infer<typeof pollLifecycleStatusSchema>;
 export const pollOptionInputSchema = z.object({
   text: z.string().min(1).max(500),
   order: z.number().int().min(0),
+  isCorrect: z.boolean().optional(),
 });
 
-export const pollQuestionInputSchema = z.object({
-  prompt: z.string().min(1).max(2000),
-  isRequired: z.boolean(),
-  order: z.number().int().min(0),
-  options: z
-    .array(pollOptionInputSchema)
-    .min(2, "At least two options are required")
-    .max(MAX_OPTIONS_PER_QUESTION),
-});
+export const pollQuestionInputSchema = z
+  .object({
+    prompt: z.string().min(1).max(2000),
+    isRequired: z.boolean(),
+    order: z.number().int().min(0),
+    options: z
+      .array(pollOptionInputSchema)
+      .min(2, "At least two options are required")
+      .max(MAX_OPTIONS_PER_QUESTION),
+  })
+  .superRefine((q, ctx) => {
+    const marked = q.options.filter((o) => o.isCorrect === true);
+    if (marked.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At most one option can be marked correct per question",
+        path: ["options"],
+      });
+    }
+  });
 
 export const createPollBodySchema = z.object({
   title: z.string().min(1).max(500),
@@ -45,16 +57,27 @@ export const pollOptionUpdateInputSchema = pollOptionInputSchema.extend({
   _id: objectIdStringSchema.optional(),
 });
 
-export const pollQuestionUpdateInputSchema = z.object({
-  _id: objectIdStringSchema.optional(),
-  prompt: z.string().min(1).max(2000),
-  isRequired: z.boolean(),
-  order: z.number().int().min(0),
-  options: z
-    .array(pollOptionUpdateInputSchema)
-    .min(2)
-    .max(MAX_OPTIONS_PER_QUESTION),
-});
+export const pollQuestionUpdateInputSchema = z
+  .object({
+    _id: objectIdStringSchema.optional(),
+    prompt: z.string().min(1).max(2000),
+    isRequired: z.boolean(),
+    order: z.number().int().min(0),
+    options: z
+      .array(pollOptionUpdateInputSchema)
+      .min(2)
+      .max(MAX_OPTIONS_PER_QUESTION),
+  })
+  .superRefine((q, ctx) => {
+    const marked = q.options.filter((o) => o.isCorrect === true);
+    if (marked.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At most one option can be marked correct per question",
+        path: ["options"],
+      });
+    }
+  });
 
 export const updatePollBodySchema = z
   .object({
@@ -104,12 +127,17 @@ export const pollWireSchema = z.object({
           _id: objectIdStringSchema,
           text: z.string(),
           order: z.number().int(),
+          isCorrect: z.boolean().optional(),
         }),
       ),
     }),
   ),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
+  /** Present on owner list/detail when provided by the API. */
+  hasResponses: z.boolean().optional(),
+  /** Present on owner list/detail when provided by the API. */
+  canDelete: z.boolean().optional(),
 });
 
 export type PollWire = z.infer<typeof pollWireSchema>;

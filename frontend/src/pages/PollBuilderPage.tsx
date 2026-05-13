@@ -9,7 +9,6 @@ import {
   createPollBodySchema,
   objectIdStringSchema,
   pollOptionInputSchema,
-  pollQuestionInputSchema,
   responseModeSchema,
   updatePollBodySchema,
 } from "@pulse-board/shared";
@@ -22,6 +21,8 @@ import {
   useForm,
   type FieldErrors,
   type Control,
+  type UseFormSetValue,
+  type UseFormWatch,
 } from "react-hook-form";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -56,6 +57,7 @@ type PollFormValues = {
     options: Array<{
       _id?: string;
       text: string;
+      isCorrect?: boolean;
     }>;
   }>;
 };
@@ -68,14 +70,25 @@ const pollOptionFormSchema = pollOptionInputSchema
   .omit({ order: true })
   .extend({ _id: objectIdStringSchema.optional() });
 
-const pollQuestionFormSchema = pollQuestionInputSchema
-  .omit({ order: true, options: true })
-  .extend({
+const pollQuestionFormSchema = z
+  .object({
     _id: objectIdStringSchema.optional(),
+    prompt: z.string().min(1).max(2000),
+    isRequired: z.boolean(),
     options: z
       .array(pollOptionFormSchema)
       .min(2, "At least two options are required")
       .max(MAX_OPTIONS_PER_QUESTION),
+  })
+  .superRefine((q, ctx) => {
+    const marked = q.options.filter((o) => o.isCorrect === true);
+    if (marked.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At most one option can be marked correct per question",
+        path: ["options"],
+      });
+    }
   });
 
 const pollFormSchema = z.object({
@@ -106,7 +119,7 @@ function toInputDateTime(value: string | Date): string {
 }
 
 function createOption(text = "") {
-  return { text };
+  return { text, isCorrect: false };
 }
 
 function createQuestion() {
@@ -142,7 +155,11 @@ function toFormValues(poll: PollWire): PollFormValues {
       isRequired: q.isRequired,
       options: [...q.options]
         .sort((a, b) => a.order - b.order)
-        .map((o) => ({ _id: o._id, text: o.text })),
+        .map((o) => ({
+          _id: o._id,
+          text: o.text,
+          isCorrect: o.isCorrect === true,
+        })),
     }));
 
   return {
@@ -171,6 +188,7 @@ function buildQuestionPayload(
       ...(includeIds && o._id ? { _id: o._id } : {}),
       text: o.text.trim(),
       order: oIndex,
+      isCorrect: o.isCorrect === true,
     })),
   }));
 }
@@ -302,6 +320,8 @@ type QuestionFieldsProps = {
   index: number;
   control: Control<PollFormValues>;
   register: ReturnType<typeof useForm<PollFormValues>>["register"];
+  watch: UseFormWatch<PollFormValues>;
+  setValue: UseFormSetValue<PollFormValues>;
   errors: FieldErrors<PollFormValues>;
   removeQuestion: (index: number) => void;
   disableRemove: boolean;
@@ -311,6 +331,8 @@ function QuestionFields({
   index,
   control,
   register,
+  watch,
+  setValue,
   errors,
   removeQuestion,
   disableRemove,
@@ -373,12 +395,37 @@ function QuestionFields({
         </div>
 
         {optionFields.map((option, optionIndex) => (
-          <div key={option.id} className="row">
+          <div key={option.id} className="row" style={{ alignItems: "center" }}>
             <input
               className="input"
               placeholder={`Option ${optionIndex + 1}`}
               {...register(`questions.${index}.options.${optionIndex}.text`)}
             />
+            <label
+              className="row"
+              style={{ flexShrink: 0, gap: "0.35rem", whiteSpace: "nowrap" }}
+            >
+              <input
+                type="radio"
+                name={`correct-q-${index}`}
+                checked={
+                  watch(`questions.${index}.options.${optionIndex}.isCorrect`) ===
+                  true
+                }
+                onChange={() => {
+                  optionFields.forEach((_, oi) => {
+                    setValue(
+                      `questions.${index}.options.${oi}.isCorrect`,
+                      oi === optionIndex,
+                      { shouldDirty: true },
+                    );
+                  });
+                }}
+              />
+              <span className="muted" style={{ fontSize: "0.85rem" }}>
+                Correct
+              </span>
+            </label>
             <button
               className="button ghost danger"
               type="button"
@@ -427,6 +474,7 @@ export function PollBuilderPage() {
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { errors, isSubmitting, dirtyFields },
   } = useForm<PollFormValues>({
     resolver: zodResolver(pollFormSchema),
@@ -806,6 +854,8 @@ export function PollBuilderPage() {
                 index={index}
                 control={control}
                 register={register}
+                watch={watch}
+                setValue={setValue}
                 errors={errors}
                 removeQuestion={removeQuestion}
                 disableRemove={questionFields.length <= 1}

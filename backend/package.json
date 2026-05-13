@@ -8,7 +8,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "pnpm --filter @pulse-board/shared build && tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
-    "typecheck": "tsc -p tsconfig.build.json --noEmit"
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@pulse-board/shared": "workspace:*",
@@ -19,6 +20,7 @@
     "express": "^5.1.0",
     "express-rate-limit": "^8.5.1",
     "jsonwebtoken": "^9.0.3",
+    "luxon": "^3.7.2",
     "mongoose": "^8.14.2",
     "socket.io": "^4.8.3",
     "zod": "^3.24.4"
@@ -28,9 +30,11 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.1",
     "@types/jsonwebtoken": "^9.0.10",
+    "@types/luxon": "^3.7.1",
     "@types/node": "^22.15.3",
     "crypto": "^1.0.1",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.6"
   }
 }

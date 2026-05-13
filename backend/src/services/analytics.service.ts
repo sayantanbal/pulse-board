@@ -1,6 +1,9 @@
 import { ERROR_CODES } from "@pulse-board/shared";
+import type { AnalyticsPollQuery } from "@pulse-board/shared";
+import { DateTime } from "luxon";
 import mongoose from "mongoose";
-import type { PollDoc } from "../domain/poll.model.js";
+import type { PollDoc, PollOptionSub, PollQuestionSub } from "../domain/poll.model.js";
+import type { AnswerSub } from "../domain/response.model.js";
 import { AggregateModel } from "../domain/aggregate.model.js";
 import { PollModel } from "../domain/poll.model.js";
 import { ResponseModel } from "../domain/response.model.js";
@@ -50,8 +53,77 @@ function addUtcDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
-async function buildResponseTimeSeries(pollId: string): Promise<ResponseTimeSeriesPoint[]> {
+/** UTC instants for each bucket boundary from start through end (inclusive), aligned to Mongo $dateTrunc with the same unit and timezone. */
+function eachBucketBetween(
+  start: Date,
+  end: Date,
+  unit: "day" | "hour",
+  timeZone: string,
+): Date[] {
+  if (timeZone === "UTC" && unit === "day") {
+    const series: Date[] = [];
+    for (let cursor = startOfUtcDay(start); cursor <= startOfUtcDay(end); cursor = addUtcDays(cursor, 1)) {
+      series.push(cursor);
+    }
+    return series;
+  }
+
+  if (timeZone === "UTC" && unit === "hour") {
+    const hourMs = 60 * 60 * 1000;
+    const first = new Date(Math.floor(start.getTime() / hourMs) * hourMs);
+    const last = new Date(Math.floor(end.getTime() / hourMs) * hourMs);
+    const series: Date[] = [];
+    for (let t = first.getTime(); t <= last.getTime(); t += hourMs) {
+      series.push(new Date(t));
+    }
+    return series;
+  }
+
+  let cur = DateTime.fromJSDate(start, { zone: "utc" }).setZone(timeZone);
+  cur = unit === "day" ? cur.startOf("day") : cur.startOf("hour");
+  const endDt = DateTime.fromJSDate(end, { zone: "utc" }).setZone(timeZone);
+  const endAligned = unit === "day" ? endDt.startOf("day") : endDt.startOf("hour");
+
+  const out: Date[] = [];
+  while (cur <= endAligned) {
+    out.push(cur.toUTC().toJSDate());
+    cur = cur.plus(unit === "day" ? { days: 1 } : { hours: 1 });
+  }
+  return out;
+}
+
+async function aggregateNowBucket(
+  unit: "day" | "hour",
+  timeZone: string,
+): Promise<Date> {
+  const trunc: Record<string, unknown> = {
+    date: "$$NOW",
+    unit,
+    timezone: timeZone,
+  };
+  const [doc] = await ResponseModel.aggregate<{ b: Date | null }>([
+    { $project: { b: { $dateTrunc: trunc } } },
+    { $limit: 1 },
+  ]);
+  if (doc?.b) {
+    return new Date(doc.b);
+  }
+  return new Date();
+}
+
+async function buildResponseTimeSeries(
+  pollId: string,
+  seriesQuery: Pick<AnalyticsPollQuery, "seriesBucket" | "seriesTimezone">,
+): Promise<ResponseTimeSeriesPoint[]> {
   const pollObjectId = new mongoose.Types.ObjectId(pollId);
+  const unit = seriesQuery.seriesBucket;
+  const timeZone = seriesQuery.seriesTimezone;
+
+  const trunc: Record<string, unknown> = {
+    date: "$createdAt",
+    unit,
+    timezone: timeZone,
+  };
 
   const rows = await ResponseModel.aggregate<{
     _id: { bucket: Date; status: "partial" | "complete" };
@@ -61,7 +133,7 @@ async function buildResponseTimeSeries(pollId: string): Promise<ResponseTimeSeri
     {
       $group: {
         _id: {
-          bucket: { $dateTrunc: { date: "$createdAt", unit: "day" } },
+          bucket: { $dateTrunc: trunc },
           status: "$status",
         },
         count: { $sum: 1 },
@@ -77,7 +149,7 @@ async function buildResponseTimeSeries(pollId: string): Promise<ResponseTimeSeri
   const bucketCounts = new Map<string, { complete: number; partial: number }>();
 
   for (const row of rows) {
-    const bucket = startOfUtcDay(new Date(row._id.bucket));
+    const bucket = new Date(row._id.bucket);
     const key = bucket.toISOString();
     const current = bucketCounts.get(key) ?? { complete: 0, partial: 0 };
 
@@ -90,23 +162,33 @@ async function buildResponseTimeSeries(pollId: string): Promise<ResponseTimeSeri
     bucketCounts.set(key, current);
   }
 
-  const firstBucket = startOfUtcDay(new Date(rows[0]._id.bucket));
-  const lastBucket = startOfUtcDay(new Date());
+  const firstBucket = new Date(rows[0]._id.bucket);
+  let lastDataBucket = firstBucket;
+  for (const row of rows) {
+    const b = new Date(row._id.bucket);
+    if (b > lastDataBucket) {
+      lastDataBucket = b;
+    }
+  }
+  const nowBucket = await aggregateNowBucket(unit, timeZone);
+  const lastBucket = lastDataBucket > nowBucket ? lastDataBucket : nowBucket;
 
-  const series: ResponseTimeSeriesPoint[] = [];
-  for (let cursor = firstBucket; cursor <= lastBucket; cursor = addUtcDays(cursor, 1)) {
-    const key = cursor.toISOString();
+  const fillBuckets = eachBucketBetween(firstBucket, lastBucket, unit, timeZone);
+
+  const points: ResponseTimeSeriesPoint[] = [];
+  for (const bucket of fillBuckets) {
+    const key = bucket.toISOString();
     const current = bucketCounts.get(key) ?? { complete: 0, partial: 0 };
     const total = current.complete + current.partial;
-    series.push({
-      bucket: cursor,
+    points.push({
+      bucket,
       totalResponses: total,
       totalCompleteResponses: current.complete,
       totalPartialResponses: current.partial,
     });
   }
 
-  return series;
+  return points;
 }
 
 async function applyLazyStatusUpdate(poll: PollDoc): Promise<void> {
@@ -250,7 +332,11 @@ async function findPollByIdOrThrow(pollId: string): Promise<PollDoc> {
   return poll;
 }
 
-export async function getOwnerPollAnalytics(ownerId: string, pollId: string) {
+export async function getOwnerPollAnalytics(
+  ownerId: string,
+  pollId: string,
+  seriesQuery: Pick<AnalyticsPollQuery, "seriesBucket" | "seriesTimezone">,
+) {
   const poll = await PollModel.findOne({
     _id: new mongoose.Types.ObjectId(pollId),
     ownerId: new mongoose.Types.ObjectId(ownerId),
@@ -266,7 +352,9 @@ export async function getOwnerPollAnalytics(ownerId: string, pollId: string) {
     pollId: poll._id.toHexString(),
     status: poll.status,
     summary: await buildSummaryFromAggregates(poll, true),
-    timeSeries: await buildResponseTimeSeries(poll._id.toHexString()),
+    timeSeries: await buildResponseTimeSeries(poll._id.toHexString(), seriesQuery),
+    seriesBucket: seriesQuery.seriesBucket,
+    seriesTimezone: seriesQuery.seriesTimezone,
   };
 }
 
@@ -288,6 +376,11 @@ export async function getPublishedPollSummary(pollId: string) {
 
 export async function getPollSnapshotForSocket(pollId: string) {
   const poll = await findPollByIdOrThrow(pollId);
+  return getPollSnapshotForPollDoc(poll);
+}
+
+/** Aggregate counts for socket payloads and public live view (no drop-off). */
+export async function getPollSnapshotForPollDoc(poll: PollDoc) {
   const summary = await buildSummaryFromAggregates(poll, false);
   return {
     pollId: poll._id.toHexString(),
@@ -315,27 +408,70 @@ export async function getPollLeaderboard(ownerId: string, pollId: string) {
   }
 
   const isAuthenticated = poll.responseMode === "authenticated";
-  const limit = 10;
+  const scoredQuestionHexIds = new Set(
+    poll.questions
+      .filter((q: PollQuestionSub) =>
+        q.options.some((o: PollOptionSub) => o.isCorrect === true),
+      )
+      .map((q: PollQuestionSub) => q._id.toHexString()),
+  );
+  const useAccuracy = scoredQuestionHexIds.size > 0;
 
-  // Fetch top complete responders ordered by response time (fastest = rank 1)
   const responses = await ResponseModel.find({
     pollId: poll._id,
     status: "complete",
   })
     .sort({ createdAt: 1 })
-    .limit(limit)
-    .select("respondentId createdAt");
+    .limit(300)
+    .select("respondentId createdAt answers");
 
   if (!responses.length) {
     return { isAuthenticated, entries: [] };
   }
 
-  // For authenticated polls, resolve email → display name (email prefix)
+  function countCorrect(answers: AnswerSub[]): number {
+    let c = 0;
+    for (const qid of scoredQuestionHexIds) {
+      const ans = answers.find((a) => a.questionId.toHexString() === qid);
+      if (!ans) {
+        continue;
+      }
+      const q = poll.questions.find((x: PollQuestionSub) => x._id.toHexString() === qid);
+      const picked = q?.options.find((o: PollOptionSub) => o._id.equals(ans.optionId));
+      if (picked?.isCorrect === true) {
+        c += 1;
+      }
+    }
+    return c;
+  }
+
+  const totalForSpeed = responses.length;
+
+  const scoredRows = responses.map((r, i) => {
+    const speedScore = Math.round(((totalForSpeed - i) / totalForSpeed) * 500);
+    const denom = scoredQuestionHexIds.size;
+    const correct = countCorrect(r.answers);
+    const composite =
+      useAccuracy && denom > 0
+        ? Math.round((correct / denom) * 500 * 0.65 + speedScore * 0.35)
+        : speedScore;
+    return { response: r, composite };
+  });
+
+  scoredRows.sort((a, b) => {
+    if (b.composite !== a.composite) {
+      return b.composite - a.composite;
+    }
+    return a.response.createdAt.getTime() - b.response.createdAt.getTime();
+  });
+
+  const top = scoredRows.slice(0, 10);
+
   const nameMap = new Map<string, string>();
   if (isAuthenticated) {
     const { UserModel } = await import("../domain/user.model.js");
-    const respondentIds = responses
-      .map((r) => r.respondentId)
+    const respondentIds = top
+      .map((row) => row.response.respondentId)
       .filter((id): id is mongoose.Types.ObjectId => id != null);
 
     if (respondentIds.length) {
@@ -346,13 +482,13 @@ export async function getPollLeaderboard(ownerId: string, pollId: string) {
     }
   }
 
-  const total = responses.length;
-  const entries = responses.map((r, i) => {
+  const entries = top.map((row, i) => {
     const rank = i + 1;
-    const score = Math.round(((total - i) / total) * 500);
+    const score = row.composite;
     let name: string;
-    if (isAuthenticated && r.respondentId) {
-      name = nameMap.get(r.respondentId.toHexString()) ?? `User #${rank}`;
+    if (isAuthenticated && row.response.respondentId) {
+      name =
+        nameMap.get(row.response.respondentId.toHexString()) ?? `User #${rank}`;
     } else {
       name = `Anonymous #${rank}`;
     }

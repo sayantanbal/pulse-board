@@ -23,6 +23,7 @@ import {
   emitResponseSnapshot,
 } from "./analyticsRealtime.service.js";
 import {
+  getPollSnapshotForPollDoc,
   getPollSnapshotForSocket,
   getPublishedPollSummary,
   recomputeAggregates,
@@ -56,6 +57,9 @@ function toPollWire(doc: PollDoc): PollWire {
     status: doc.status,
     allowCreatorResponses: doc.allowCreatorResponses,
     allowResponseChanges: doc.allowResponseChanges,
+    timerSeconds: doc.timerSeconds ?? 0,
+    timerMode: doc.timerMode ?? "none",
+    timerStartedAt: doc.timerStartedAt ?? undefined,
     deletedAt: doc.deletedAt ?? null,
     questions: doc.questions.map((q) => ({
       _id: q._id.toHexString(),
@@ -210,7 +214,21 @@ export async function getPublicPoll(pollId: string): Promise<PublicPollResult> {
     };
   }
 
-  return { poll: toPollWire(poll) };
+  const snap = await getPollSnapshotForPollDoc(poll);
+  return {
+    poll: toPollWire(poll),
+    summary: {
+      totalCompleteResponses: snap.totalResponses,
+      questions: snap.questions.map((q) => ({
+        questionId: q.questionId,
+        options: q.options.map((o) => ({
+          optionId: o.optionId,
+          count: o.count,
+          percentage: o.percentage,
+        })),
+      })),
+    },
+  };
 }
 
 export async function submitPublicPollResponse(input: {

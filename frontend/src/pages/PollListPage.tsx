@@ -300,7 +300,7 @@ export function PollListPage() {
           const canShare = poll.status !== "draft";
           const canPublish =
             poll.status !== "published" && poll.status !== "draft";
-          const canDelete = poll.status !== "published";
+          const canDelete = poll.canDelete === true;
           const canViewAnalytics = poll.status !== "draft";
 
           return (
@@ -372,6 +372,11 @@ export function PollListPage() {
                     ) : null}
                   </div>
                 </div>
+                {poll.hasResponses && !canDelete ? (
+                  <p className="muted" style={{ margin: "0.25rem 0 0", fontSize: "0.85rem" }}>
+                    This poll has responses and cannot be deleted.
+                  </p>
+                ) : null}
                 {canShare ? (
                   <div className="action-group">
                     <p className="action-label">Share</p>

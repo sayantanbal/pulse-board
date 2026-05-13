@@ -1,5 +1,7 @@
 import type { Server as HttpServer } from "node:http";
+import mongoose from "mongoose";
 import { Server } from "socket.io";
+import { PollModel } from "../domain/poll.model.js";
 import { runtimeConfig } from "../config/runtime.js";
 
 const ANALYTICS_NAMESPACE = "/analytics";
@@ -46,7 +48,29 @@ export function attachAnalyticsSocket(httpServer: HttpServer): Server {
       if (typeof pollId !== "string" || !pollId.trim()) {
         return;
       }
-      socket.join(pollId);
+      const hex = pollId.trim();
+      if (!/^[a-f0-9]{24}$/i.test(hex)) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          const poll = await PollModel.findOne({
+            _id: new mongoose.Types.ObjectId(hex),
+            deletedAt: null,
+          }).select("status");
+
+          if (!poll) {
+            return;
+          }
+          if (poll.status === "draft") {
+            return;
+          }
+          socket.join(hex);
+        } catch {
+          /* ignore invalid joins */
+        }
+      })();
     });
 
     socket.on("leave", (pollId: string) => {

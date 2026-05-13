@@ -491,6 +491,12 @@ export function CreatorLivePage() {
 
   const activeQuestion = questions[activeQuestionIdx] ?? null;
   const totalResponses = analytics?.summary.totalCompleteResponses ?? 0;
+  const avgLeaderboardScore = useMemo(() => {
+    const entries = leaderboard?.entries ?? [];
+    if (entries.length === 0) return null;
+    const sum = entries.reduce((s, e) => s + e.score, 0);
+    return Math.round(sum / entries.length);
+  }, [leaderboard]);
   const timerTotal = poll?.timerSeconds ?? 0;
   const timerMode = poll?.timerMode ?? "none";
 
@@ -652,12 +658,8 @@ export function CreatorLivePage() {
             />
             <StatCard label="Live" value={totalResponses} />
             <StatCard
-              label="Avg score"
-              value={
-                totalResponses > 0
-                  ? `${Math.round(65 + totalResponses / 10)}%`
-                  : "—"
-              }
+              label="Avg leaderboard score"
+              value={avgLeaderboardScore ?? "—"}
             />
           </div>
 

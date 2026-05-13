@@ -9,6 +9,8 @@ const envSchema = z.object({
   FRONTEND_ORIGINS: z.string().optional(),
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),
+  /** When set, `POST /internal/expire-polls` with `Authorization: Bearer <secret>` may transition due polls to `expired`. */
+  INTERNAL_JOB_SECRET: z.string().min(8).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

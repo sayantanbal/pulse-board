@@ -448,6 +448,100 @@ Measured from this development workspace on 2026-05-13 against the deployed prod
 
 The first sample is slower for frontend/backend HTTP because it includes colder connection setup. Subsequent samples are steadier.
 
+### How to reproduce (HTTP)
+
+Requirements: `curl` in your shell (Git Bash, WSL, macOS, or Linux).
+
+`curl` writes `%{time_total}` in **seconds** with a fractional part. Multiply each value by 1000 to compare with the table (milliseconds). Run each loop **five times** (or run a single URL five times) and compute min, average, and max yourself (spreadsheet or `awk`).
+
+Set the backend base once (match your deployment if it differs from section 19):
+
+```bash
+export BACKEND_URL="https://pulse-board-backend-600719163026.asia-south1.run.app"
+```
+
+Frontend HTML (expect HTTP **200**):
+
+```bash
+for i in 1 2 3 4 5; do
+  curl -sS -o /dev/null -w "sample ${i}: %{http_code} %{time_total}s\n" https://pulseboard.sayantanbal.in/
+done
+```
+
+Backend health (expect **200**):
+
+```bash
+for i in 1 2 3 4 5; do
+  curl -sS -o /dev/null -w "sample ${i}: %{http_code} %{time_total}s\n" "${BACKEND_URL}/health"
+done
+```
+
+Backend public poll miss, invalid ObjectId (expect **404**):
+
+```bash
+for i in 1 2 3 4 5; do
+  curl -sS -o /dev/null -w "sample ${i}: %{http_code} %{time_total}s\n" \
+    "${BACKEND_URL}/public/polls/000000000000000000000000"
+done
+```
+
+### How to reproduce (Socket.IO websocket handshake)
+
+Use the same `socket.io-client` version as the frontend. From the **repository root**, after `pnpm install`:
+
+```bash
+pnpm --filter @pulse-board/frontend exec node <<'NODE'
+const { io } = require("socket.io-client");
+
+const backend =
+  process.env.BACKEND_URL ||
+  "https://pulse-board-backend-600719163026.asia-south1.run.app";
+const url = `${backend}/analytics`;
+
+function oneHandshake() {
+  const t0 = Date.now();
+  return new Promise((resolve, reject) => {
+    const s = io(url, {
+      transports: ["websocket"],
+      reconnection: false,
+      timeout: 20000,
+    });
+    s.on("connect", () => {
+      resolve(Date.now() - t0);
+      s.close();
+    });
+    s.on("connect_error", (err) => {
+      s.close();
+      reject(err);
+    });
+  });
+}
+
+(async () => {
+  const samples = [];
+  for (let i = 0; i < 5; i += 1) {
+    samples.push(await oneHandshake());
+  }
+  const min = Math.min(...samples);
+  const max = Math.max(...samples);
+  const avg = Math.round(samples.reduce((a, b) => a + b, 0) / samples.length);
+  console.log("samples ms:", samples.join(", "));
+  console.log("min:", min, "avg:", avg, "max:", max);
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
+NODE
+```
+
+`transports: ['websocket']` forces a WebSocket upgrade path comparable to the “websocket handshake” row. If `connect_error` appears, check `BACKEND_URL`, TLS, and corporate proxies before comparing timings. Like HTTP, the **first** handshake sample can be much higher when Cloud Run or the network path is cold; exclude it or report min/avg/max over all five samples as in the table above.
+
+### How to verify the metrics
+
+- **HTTP**: Confirm status codes (**200** for `/` and `/health`, **404** for the dummy poll id). Latencies should land in a **similar ballpark** to the table; large differences are normal across regions, time of day, and Cloud Run cold start.
+- **Cold vs warm**: The **first** HTTP sample is often higher; later samples clustering lower matches the note above the table.
+- **Socket.IO**: The script must finish with **five** millisecond samples and no `connect_error`. Compare your min/avg/max to the table the same way as HTTP (point-in-time, not an SLA).
+
 ## 18. Security Controls
 
 Implemented controls:
@@ -520,6 +614,40 @@ JWT_REFRESH_SECRET=...
 ```
 
 `FRONTEND_ORIGINS` can also be used for comma-separated additional origins.
+
+Optional:
+
+```bash
+INTERNAL_JOB_SECRET=...   # enables POST /internal/expire-polls (see below)
+```
+
+### Internal expiry job
+
+When `INTERNAL_JOB_SECRET` is set, call:
+
+```http
+POST /internal/expire-polls
+Authorization: Bearer <INTERNAL_JOB_SECRET>
+```
+
+This marks **active** polls whose `expiresAt` is in the past as **expired** without waiting for a user-driven request. Schedule it with **Google Cloud Scheduler** (or another cron) every 1–5 minutes in production if you rely on strict expiry transitions.
+
+### Cloud Run service settings
+
+- **Min / max instances**: balance cost versus cold starts (WebSocket users benefit from fewer cold instances).
+- **Concurrency**: default is often fine; lower if you see memory pressure under parallel Socket.IO + HTTP load.
+- **Request timeout**: set above your slowest expected aggregate or analytics path.
+- **CPU allocation**: default (CPU during request processing) is sufficient; enable always-on CPU only if you add in-process background workers.
+
+### Firebase Hosting and custom domains
+
+- In the Firebase console, open **Hosting → Add custom domain** and complete the DNS verification (TXT) and SSL provisioning steps.
+- Keep SPA rewrites to `index.html` for all app routes after adding a domain.
+
+### MongoDB network access
+
+- Prefer **private networking** (VPC connector + Atlas private endpoint) over a public `0.0.0.0/0` allow list.
+- Place MongoDB and Cloud Run in regions with acceptable round-trip latency to each other.
 
 ## 20. Developer Workflow
 
@@ -606,4 +734,4 @@ Current shipped respondent features:
 - Firebase Hosting must serve the built frontend with SPA rewrites.
 - Socket.IO CORS uses the same runtime origin configuration as Express.
 - Analytics correctness depends on aggregate updates; `recomputeAggregates(pollId)` exists as a fallback path.
-- The public result page only subscribes to sockets after the poll is published.
+- The public poll page subscribes to live analytics deltas while the poll is **active** or **published**, so aggregate bars can update before results are formally published.

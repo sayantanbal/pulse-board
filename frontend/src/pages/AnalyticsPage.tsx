@@ -51,6 +51,8 @@ type AnalyticsResponse = {
   status: PollStatus;
   summary: AnalyticsSummary;
   timeSeries: ResponseTimeSeriesPoint[];
+  seriesBucket?: "day" | "hour";
+  seriesTimezone?: string;
 };
 
 type PollDetails = {
@@ -67,12 +69,15 @@ function formatPercent(value: number): string {
   return `${Math.round(value * 10) / 10}%`;
 }
 
-function formatBucketDate(value: string): string {
+function formatBucketDate(value: string, bucket: "day" | "hour", timeZone: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return date.toLocaleDateString();
+  if (bucket === "hour") {
+    return date.toLocaleString(undefined, { timeZone });
+  }
+  return date.toLocaleDateString(undefined, { timeZone });
 }
 
 function formatErrorMessage(error: unknown, fallback: string): string {
@@ -93,6 +98,10 @@ export function AnalyticsPage() {
   const pollId = typeof id === "string" && objectIdRegex.test(id) ? id : null;
   const queryClient = useQueryClient();
 
+  const [seriesBucket, setSeriesBucket] = useState<"day" | "hour">("day");
+  const [seriesTimezone, setSeriesTimezone] = useState(() =>
+    Intl.DateTimeFormat().resolvedOptions().timeZone,
+  );
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishNotice, setPublishNotice] = useState<string | null>(null);
@@ -107,13 +116,22 @@ export function AnalyticsPage() {
   const handleShareLink = () =>
     _handleShareLink(pollId ?? "", poll?.title ?? "Pulse Board poll");
   const socket = useMemo(() => getAnalyticsSocket(), []);
+
+  const analyticsQueryKey = useMemo(
+    () => ["analytics", pollId, seriesBucket, seriesTimezone] as const,
+    [pollId, seriesBucket, seriesTimezone],
+  );
+
   const analyticsQuery = useQuery({
-    queryKey: ["analytics", pollId],
+    queryKey: analyticsQueryKey,
     enabled: Boolean(pollId),
     staleTime: 30_000,
     queryFn: async () => {
       const { data } = await apiClient.get<AnalyticsResponse>(
         `/analytics/polls/${pollId}`,
+        {
+          params: { seriesBucket, seriesTimezone },
+        },
       );
       return data;
     },
@@ -238,7 +256,7 @@ export function AnalyticsPage() {
     const onDelta = (delta: DeltaPayload) => {
       setLastSocketEvent(`delta ${delta.questionId}/${delta.optionId}`);
       queryClient.setQueryData<AnalyticsResponse | undefined>(
-        ["analytics", pollId],
+        analyticsQueryKey,
         (prev) => (prev ? applyDelta(prev, delta) : prev),
       );
     };
@@ -246,7 +264,7 @@ export function AnalyticsPage() {
     const onSnapshot = (snapshot: SnapshotPayload) => {
       setLastSocketEvent(`snapshot ${snapshot.pollId}`);
       queryClient.setQueryData<AnalyticsResponse | undefined>(
-        ["analytics", pollId],
+        analyticsQueryKey,
         (prev) => (prev ? applySnapshot(prev, snapshot) : prev),
       );
     };
@@ -275,7 +293,15 @@ export function AnalyticsPage() {
       socket.io.off("reconnect", onReconnect);
       socket.disconnect();
     };
-  }, [analyticsQuery.refetch, pollId, queryClient, socket]);
+  }, [
+    analyticsQuery.refetch,
+    analyticsQueryKey,
+    pollId,
+    queryClient,
+    seriesBucket,
+    seriesTimezone,
+    socket,
+  ]);
 
   const analytics = analyticsQuery.data ?? null;
   const poll = pollQuery.data ?? null;
@@ -322,7 +348,7 @@ export function AnalyticsPage() {
     try {
       await apiClient.patch(`/polls/${pollId}/publish`);
       queryClient.setQueryData<AnalyticsResponse | undefined>(
-        ["analytics", pollId],
+        analyticsQueryKey,
         (prev) => (prev ? { ...prev, status: "published" } : prev),
       );
       setPublishNotice("Results published.");
@@ -492,19 +518,51 @@ export function AnalyticsPage() {
       {showTimeSeries ? (
         <div className="stack">
           <h3 style={{ margin: 0 }}>Response rate over time</h3>
+          <div className="row" style={{ gap: "1rem", flexWrap: "wrap", alignItems: "center" }}>
+            <label className="row" style={{ gap: "0.5rem" }}>
+              <span className="muted">Bucket</span>
+              <select
+                className="input"
+                style={{ width: "auto" }}
+                value={seriesBucket}
+                onChange={(e) =>
+                  setSeriesBucket(e.target.value as "day" | "hour")
+                }
+              >
+                <option value="day">Day</option>
+                <option value="hour">Hour</option>
+              </select>
+            </label>
+            <label className="field" style={{ minWidth: "12rem", flex: "1 1 200px" }}>
+              <span className="muted">Time zone (IANA)</span>
+              <input
+                className="input"
+                value={seriesTimezone}
+                onChange={(e) => setSeriesTimezone(e.target.value)}
+                spellCheck={false}
+                placeholder="e.g. UTC or America/New_York"
+              />
+            </label>
+          </div>
           {timeSeries.length === 0 ? (
             <p className="muted">No response history yet.</p>
           ) : (
             <div className="timeseries-table">
               <div className="timeseries-row timeseries-header">
-                <span>Date</span>
+                <span>{seriesBucket === "hour" ? "Hour" : "Day"}</span>
                 <span>Complete</span>
                 <span>Partial</span>
                 <span>Total</span>
               </div>
               {timeSeries.map((point) => (
                 <div key={point.bucket} className="timeseries-row">
-                  <span>{formatBucketDate(point.bucket)}</span>
+                  <span>
+                    {formatBucketDate(
+                      point.bucket,
+                      seriesBucket,
+                      seriesTimezone,
+                    )}
+                  </span>
                   <span>{point.totalCompleteResponses}</span>
                   <span>{point.totalPartialResponses}</span>
                   <span>{point.totalResponses}</span>
