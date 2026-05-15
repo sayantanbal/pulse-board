@@ -43,6 +43,13 @@ const responseSchema = new Schema<ResponseProps>(
 responseSchema.index({ pollId: 1 });
 responseSchema.index({ pollId: 1, ipHash: 1 });
 responseSchema.index({ pollId: 1, status: 1 });
+responseSchema.index(
+  { pollId: 1, respondentId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { respondentId: { $ne: null } },
+  },
+);
 
 export const ResponseModel =
   mongoose.models.Response ??

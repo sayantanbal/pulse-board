@@ -32,7 +32,9 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/luxon": "^3.7.1",
     "@types/node": "^22.15.3",
+    "@types/supertest": "^6.0.3",
     "crypto": "^1.0.1",
+    "supertest": "^7.1.4",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^4.1.6"

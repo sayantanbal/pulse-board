@@ -13,8 +13,13 @@ import { env } from "../config/env.js";
 import { AggregateModel } from "../domain/aggregate.model.js";
 import type { PollDoc } from "../domain/poll.model.js";
 import { PollModel } from "../domain/poll.model.js";
-import { ResponseModel } from "../domain/response.model.js";
+import { AnonResponseClaimModel } from "../domain/anonResponseClaim.model.js";
+import { ResponseModel, type ResponseDoc } from "../domain/response.model.js";
 import { UserModel } from "../domain/user.model.js";
+import {
+  isAnonResponseClaimDuplicate,
+  isDuplicateKeyError,
+} from "../lib/mongoErrors.js";
 import { sha256Hex } from "../lib/tokenHash.js";
 import { HttpError } from "../policies/httpError.js";
 import { runPollStatusCheck } from "../domain/pollStatus.js";
@@ -28,6 +33,12 @@ import {
   getPublishedPollSummary,
   recomputeAggregates,
 } from "./analytics.service.js";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
 type AccessJwtPayload = { sub: string };
 
@@ -257,7 +268,7 @@ export async function submitPublicPollResponse(input: {
   }
 
   const answers = validateAnswersAgainstPoll(poll, input.body);
-  const ipHash = sha256Hex(`${input.ip}:${input.userAgent}`);
+  const uaIpFingerprint = sha256Hex(`${input.ip}:${input.userAgent}`);
 
   const respondentId = await resolveRespondentIdIfRequired(
     poll.responseMode,
@@ -281,30 +292,7 @@ export async function submitPublicPollResponse(input: {
   const anonSessionId = typeof input.cookies[COOKIE_ANON_SESSION] === "string"
     ? (input.cookies[COOKIE_ANON_SESSION] as string)
     : null;
-  const dedupKey = anonSessionId ?? ipHash;
-
-  let existingResponse = null;
-  if (poll.responseMode === "anonymous") {
-    const dedupWindowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    existingResponse = await ResponseModel.findOne({
-      pollId: poll._id,
-      ipHash: dedupKey,
-      createdAt: { $gte: dedupWindowStart },
-    });
-  } else if (respondentId) {
-    existingResponse = await ResponseModel.findOne({
-      pollId: poll._id,
-      respondentId,
-    });
-  }
-
-  if (existingResponse && !poll.allowResponseChanges) {
-    throw new HttpError(
-      409,
-      ERROR_CODES.CONFLICT,
-      "Duplicate response detected for this session",
-    );
-  }
+  const dedupKey = anonSessionId ?? uaIpFingerprint;
 
   const deltas: Array<{
     questionId: string;
@@ -315,86 +303,156 @@ export async function submitPublicPollResponse(input: {
   let createdId = "";
   const createdStatus = input.body.status;
 
+  const maxTxnAttempts = poll.responseMode === "anonymous" ? 8 : 1;
+  let existingResponse: ResponseDoc | null = null;
+
   const session = await mongoose.startSession();
   try {
-    await session.withTransaction(async () => {
-      if (existingResponse) {
-        if (existingResponse.status === "complete") {
-          for (const answer of existingResponse.answers) {
-            await AggregateModel.findOneAndUpdate(
-              {
-                pollId: poll._id,
-                questionId: answer.questionId,
-                optionId: answer.optionId,
-              },
-              { $inc: { count: -1 } },
+    for (let attempt = 0; attempt < maxTxnAttempts; attempt++) {
+      if (poll.responseMode === "anonymous") {
+        const dedupWindowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        existingResponse = await ResponseModel.findOne({
+          pollId: poll._id,
+          ipHash: dedupKey,
+          createdAt: { $gte: dedupWindowStart },
+        });
+      } else if (respondentId) {
+        existingResponse = await ResponseModel.findOne({
+          pollId: poll._id,
+          respondentId,
+        });
+      }
+
+      if (existingResponse && !poll.allowResponseChanges) {
+        throw new HttpError(
+          409,
+          ERROR_CODES.CONFLICT,
+          "Duplicate response detected for this session",
+        );
+      }
+
+      try {
+        await session.withTransaction(async () => {
+          if (poll.responseMode === "anonymous") {
+            await AnonResponseClaimModel.create(
+              [{ pollId: poll._id, dedupKey }],
               { session },
             );
           }
-        }
-        await existingResponse.deleteOne({ session });
-      }
 
-      const created = await ResponseModel.create(
-        [
-          {
-            pollId: poll._id,
-            respondentId,
-            status: input.body.status,
-            ipHash,
-            answers,
-          },
-        ],
-        { session },
-      );
-
-      const createdDoc = created[0];
-      if (!createdDoc) {
-        throw new HttpError(500, ERROR_CODES.INTERNAL, "Internal Server Error");
-      }
-      createdId = createdDoc._id.toHexString();
-
-      if (input.body.status === "complete") {
-        for (const answer of answers) {
-          const updated = await AggregateModel.findOneAndUpdate(
-            {
-              pollId: poll._id,
-              questionId: answer.questionId,
-              optionId: answer.optionId,
-            },
-            { $inc: { count: 1 } },
-            {
-              upsert: true,
-              new: true,
-              setDefaultsOnInsert: true,
-              session,
-            },
-          );
-
-          if (!updated) {
-            throw new HttpError(500, ERROR_CODES.INTERNAL, "Internal Server Error");
+          if (existingResponse) {
+            if (existingResponse.status === "complete") {
+              for (const answer of existingResponse.answers) {
+                await AggregateModel.findOneAndUpdate(
+                  {
+                    pollId: poll._id,
+                    questionId: answer.questionId,
+                    optionId: answer.optionId,
+                  },
+                  { $inc: { count: -1 } },
+                  { session },
+                );
+              }
+            }
+            await existingResponse.deleteOne({ session });
           }
 
-          deltas.push({
-            questionId: answer.questionId.toHexString(),
-            optionId: answer.optionId.toHexString(),
-            newCount: updated.count,
-          });
-        }
+          let created;
+          try {
+            created = await ResponseModel.create(
+              [
+                {
+                  pollId: poll._id,
+                  respondentId,
+                  status: input.body.status,
+                  ipHash: dedupKey,
+                  answers,
+                },
+              ],
+              { session },
+            );
+          } catch (e) {
+            if (isDuplicateKeyError(e) && respondentId) {
+              throw new HttpError(
+                409,
+                ERROR_CODES.CONFLICT,
+                "Duplicate response detected for this session",
+              );
+            }
+            throw e;
+          }
 
-        totalResponses = await ResponseModel.countDocuments({
-          pollId: poll._id,
-          status: "complete",
-        }).session(session);
+          const createdDoc = created[0];
+          if (!createdDoc) {
+            throw new HttpError(500, ERROR_CODES.INTERNAL, "Internal Server Error");
+          }
+          createdId = createdDoc._id.toHexString();
+
+          if (input.body.status === "complete") {
+            for (const answer of answers) {
+              const updated = await AggregateModel.findOneAndUpdate(
+                {
+                  pollId: poll._id,
+                  questionId: answer.questionId,
+                  optionId: answer.optionId,
+                },
+                { $inc: { count: 1 } },
+                {
+                  upsert: true,
+                  new: true,
+                  setDefaultsOnInsert: true,
+                  session,
+                },
+              );
+
+              if (!updated) {
+                throw new HttpError(500, ERROR_CODES.INTERNAL, "Internal Server Error");
+              }
+
+              deltas.push({
+                questionId: answer.questionId.toHexString(),
+                optionId: answer.optionId.toHexString(),
+                newCount: updated.count,
+              });
+            }
+
+            totalResponses = await ResponseModel.countDocuments({
+              pollId: poll._id,
+              status: "complete",
+            }).session(session);
+          }
+
+          if (poll.responseMode === "anonymous") {
+            await AnonResponseClaimModel.deleteOne(
+              { pollId: poll._id, dedupKey },
+              { session },
+            );
+          }
+        });
+        break;
+      } catch (e) {
+        if (e instanceof HttpError) {
+          throw e;
+        }
+        if (
+          poll.responseMode === "anonymous" &&
+          isAnonResponseClaimDuplicate(e) &&
+          attempt < maxTxnAttempts - 1
+        ) {
+          await sleep(25 * (attempt + 1));
+          deltas.length = 0;
+          totalResponses = 0;
+          createdId = "";
+          continue;
+        }
+        if (createdStatus === "complete") {
+          await recomputeAggregates(poll._id.toHexString());
+          const snapshot = await getPollSnapshotForSocket(poll._id.toHexString());
+          emitResponseSnapshot(snapshot);
+        }
+        throw e;
       }
-    });
-  } catch (e) {
-    if (createdStatus === "complete") {
-      await recomputeAggregates(poll._id.toHexString());
-      const snapshot = await getPollSnapshotForSocket(poll._id.toHexString());
-      emitResponseSnapshot(snapshot);
     }
-    throw e;
   } finally {
     await session.endSession();
   }
