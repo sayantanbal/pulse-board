@@ -12,3 +12,4 @@ mongo_secret.txt
 refresh_secret.txt
 .firebase/
 docs/CURRENT_LIMITATIONS.md
+*.mmdb

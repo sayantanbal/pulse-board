@@ -20,6 +20,7 @@ import {
   isAnonResponseClaimDuplicate,
   isDuplicateKeyError,
 } from "../lib/mongoErrors.js";
+import { isViewTrackingEnabled } from "../lib/viewTracking.js";
 import { sha256Hex } from "../lib/tokenHash.js";
 import { HttpError } from "../policies/httpError.js";
 import { runPollStatusCheck } from "../domain/pollStatus.js";
@@ -85,6 +86,7 @@ function toPollWire(doc: PollDoc): PollWire {
     })),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+    viewTrackingEnabled: isViewTrackingEnabled(doc.status),
   };
 }
 

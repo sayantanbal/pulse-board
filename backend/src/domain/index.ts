@@ -4,3 +4,4 @@ export * from "./pollStatus.js";
 export * from "./refreshToken.model.js";
 export * from "./response.model.js";
 export * from "./user.model.js";
+export * from "./viewHistory.model.js";

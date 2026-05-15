@@ -3,6 +3,7 @@ import { ERROR_CODES } from "@pulse-board/shared";
 import type { PollDoc } from "../domain/poll.model.js";
 import { PollModel } from "../domain/poll.model.js";
 import { runPollStatusCheck } from "../domain/pollStatus.js";
+import { isViewTrackingEnabled } from "../lib/viewTracking.js";
 import { HttpError } from "../policies/httpError.js";
 import {
   createPollDoc,
@@ -11,6 +12,7 @@ import {
   listOwnerPolls,
   pollIdsWithResponses,
 } from "../repositories/poll.repository.js";
+import { cascadeDeleteViewHistory } from "./viewTracker.service.js";
 
 function toPollWire(doc: PollDoc): PollWire {
   return {
@@ -41,6 +43,7 @@ function toPollWire(doc: PollDoc): PollWire {
     })),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+    viewTrackingEnabled: isViewTrackingEnabled(doc.status),
   };
 }
 
@@ -303,6 +306,20 @@ export async function deleteOwnerPoll(ownerId: string, pollId: string) {
 
   poll.deletedAt = new Date();
   await poll.save();
+}
+
+/** Hard-deletes a poll and cascades view history (for admin/testing use). */
+export async function hardDeleteOwnerPoll(
+  ownerId: string,
+  pollId: string,
+): Promise<void> {
+  const poll = await findOwnerPollById(ownerId, pollId);
+  if (!poll) {
+    throw new HttpError(404, ERROR_CODES.NOT_FOUND, "Poll not found");
+  }
+
+  await PollModel.deleteOne({ _id: poll._id });
+  await cascadeDeleteViewHistory(pollId);
 }
 
 export async function publishOwnerPoll(ownerId: string, pollId: string) {

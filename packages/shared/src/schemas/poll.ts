@@ -138,6 +138,8 @@ export const pollWireSchema = z.object({
   hasResponses: z.boolean().optional(),
   /** Present on owner list/detail when provided by the API. */
   canDelete: z.boolean().optional(),
+  /** Computed from poll status: true when active or published. */
+  viewTrackingEnabled: z.boolean().optional(),
 });
 
 export type PollWire = z.infer<typeof pollWireSchema>;

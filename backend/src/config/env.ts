@@ -11,6 +11,8 @@ const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(16),
   /** When set, `POST /internal/expire-polls` with `Authorization: Bearer <secret>` may transition due polls to `expired`. */
   INTERNAL_JOB_SECRET: z.string().min(8).optional(),
+  IP_HASH_SALT: z.string().min(32),
+  MAXMIND_DB_PATH: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

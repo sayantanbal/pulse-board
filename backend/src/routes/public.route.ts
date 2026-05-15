@@ -3,6 +3,7 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { validateBody } from "../policies/validateBody.js";
 import { validateParams } from "../policies/validateParams.js";
+import { viewTrackerMiddleware } from "../policies/viewTracker.js";
 import { getPublicPoll, submitPublicPollResponse } from "../services/publicPoll.service.js";
 
 export const publicRouter = Router();
@@ -22,6 +23,7 @@ function getPollIdParam(value: string | string[]): string {
 
 publicRouter.get(
   "/polls/:id",
+  viewTrackerMiddleware,
   validateParams(pollIdParamsSchema),
   async (req, res, next) => {
     try {

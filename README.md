@@ -34,8 +34,19 @@ MONGODB_URI=mongodb://127.0.0.1:27017/pulse-board
 FRONTEND_ORIGIN=http://localhost:5173
 JWT_ACCESS_SECRET=replace-with-32-plus-chars
 JWT_REFRESH_SECRET=replace-with-32-plus-chars
+IP_HASH_SALT=replace-with-32-plus-chars
 PORT=3000
 ```
+
+Optional view-history geolocation (MaxMind GeoLite2 City):
+
+```bash
+# Download GeoLite2-City.mmdb from MaxMind and place at:
+# backend/data/GeoLite2-City.mmdb
+MAXMIND_DB_PATH=./data/GeoLite2-City.mmdb
+```
+
+Without the database file, view tracking still works; country/region/city are stored as null.
 
 Optional `frontend/.env`:
 
@@ -63,6 +74,8 @@ MONGODB_URI=...
 FRONTEND_ORIGIN=https://pulseboard.sayantanbal.in
 JWT_ACCESS_SECRET=...
 JWT_REFRESH_SECRET=...
+IP_HASH_SALT=...
+# Optional: MAXMIND_DB_PATH=./data/GeoLite2-City.mmdb
 ```
 
 Frontend build env:
